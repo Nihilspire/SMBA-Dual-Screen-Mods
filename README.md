@@ -218,6 +218,43 @@ Subspace, TRY AGAIN), the player state `03001C6F` (7 dying, 0x0B at a door), the
 60), the character select cursor `03001E01` and the pause / game-over menu cursor `03001A63`. The Link page's status
 line now says GAME OVER, OUCH or POWER JUMP when they apply, and at character select the status card follows the
 cursor (name, colour, portrait) instead of showing the last character played.
+**0.24:** clouds no longer vanish from the 3D view near the top of a vertical area (reported on 1-1's vine climb: the
+cloud under the player and the one below it went as the camera scrolled up). The 3D view picks the area's layout
+(vertical pages or horizontal) by matching the level data against BG0, because SMA's vertical flag can't be trusted
+(it read 0 on the vine climb). Near the top, the horizontal reading is page 0's 15 rows, the same data, so it matched
+every cell it had and simply left out the rows below; it tied with the right layout and won on the flag. Those rows
+then had no level data and their clouds were dropped as sky. A cell that a layout puts outside the area now counts as
+a miss when BG0 draws something there. The same tie hid the clouds below the start door for the first frames of 1-1;
+the other levels' dumps are unchanged.
+
+**0.25:** clouds are puffy pillows instead of a box per tile. Each cloud is inflated from its own outline: a distance
+field over its opaque pixels sets a rounded height (0 at the edge, full 6 px in), front and back bulge either side of
+the block's middle and meet at the outline, and the shading follows the curve. The black of the checkered tops turns
+the cloud's pink on them, because black was harsh on the curves. The DIORAMA camera is back (LOW / TILT / DIORAMA / FAR,
+on the menu and the 3D CAMERA button). The busiest cloud frame (7-1) gains about 21k vertices.
+
+**0.26:** more things get their own shape in 3D, all built with the cloud's rounded-edge field (`Scene3D.Field`) or
+simple solids, the game's art always the texture:
+- **hills** keep flat fronts, rounded off (quarter round, 5 px) wherever a hill's front ends, including where one hill
+  steps in front of another;
+- **jars** (`21A`–`21F`) are upright cylinders with a lid, **logs** (`220`–`222` outside the desert) lying cylinders
+  with cut ends; the art wraps round by angle, so the outline doesn't smear over the curve from the side cameras;
+- **water** (`004`/`005`, and `008`/`00A` in world 4) is a volume instead of a wall of waves: its front a quarter block
+  behind the ground's edge and a level surface from there back, textured with the water body;
+- **grass, vines and palm tops** get a second copy crossed at 90 degrees (only noticeable from the side cameras: their art
+  is on the metatile's centre line, so the copies line up from the front);
+- **ice, bone and sand blocks** get a 2 px bevel on each block, so neighbours meet in a groove;
+- **ROUND SPRITES** (3D menu, off by default) inflates sprites from their outlines like the clouds, per object, so a
+  character made of several sprites rounds as one.
+
+The ids are checked per world graphics set (`030019FC`), since `220`–`222` are logs in world 1 and bone blocks in the
+desert. Over the 714 test frames, the camera, layout and map match are unchanged; the mean vertex count goes from 11k to
+21k (mostly the hills' rounded edges) and the peak stays 46.6k. Renders of each in all four cameras: `out/renders-0.26/`.
+
+**0.27:** logs clipped in 0.26. As a round log in the middle of the block's depth they sat behind the banks' fronts (the
+player floated in front of them), and the banks still left out their side face next to them as if a full block were
+there, so sky showed round the log. A log now fills the depth like the box it was, round at the front and the back
+with a flat wooden top and bottom between, and banks (any block) keep their faces next to logs and jars.
 
 ## Build
 ```

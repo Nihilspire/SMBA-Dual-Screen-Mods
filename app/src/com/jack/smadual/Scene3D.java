@@ -244,12 +244,17 @@ final class Scene3D {
     }
 
     private int lastGood = -1000, frameNo, lastKey = -1;
-    /** Fraction (0..1000) of sampled screen cells whose BG0 tile matches the level data under camera (cx, cy). */
+    /** Fraction (0..1000) of sampled screen cells whose BG0 tile matches the level data under camera (cx, cy).
+     *  0.24: a cell the layout puts outside the area counts as a miss when BG0 draws something there. Near the top of a
+     *  vertical area the horizontal reading (page 0's 15 rows) matched every cell it had and left the rest out, so it
+     *  tied with the right one; with the vertical flag wrong (1-1's vine climb) it won, rows 15 and down had no level
+     *  data, and the clouds there vanished from the 3D view as the camera reached the top. */
     private int score(byte[] f, int cx, int cy) {
         int ok = 0, n = 0;
         for (int sy = 12; sy < H; sy += 20) for (int sx = 4; sx < W; sx += 18) {
             int wx = cx + sx, wy = cy + sy, t = meta(f, wx, wy);
-            if (t < 0 || !quad(t)) continue;
+            if (t < 0) { if (!emptyBgTile(f, bg[0].cb, entry(f, bg[0], bg[0].hofs + sx, bg[0].vofs + sy) & 0x3FF)) n++; continue; }
+            if (!quad(t)) continue;
             n++;
             int want = q[((wy >> 3) & 1) * 2 + ((wx >> 3) & 1)];
             if ((entry(f, bg[0], bg[0].hofs + sx, bg[0].vofs + sy) & 0x3FF) == (want & 0x3FF)) ok++;
@@ -381,6 +386,359 @@ final class Scene3D {
         if (cls[r][c] != BLOCK) return Float.NEGATIVE_INFINITY;
         return zf + nst[r][c] * D * HILL_STEP + (hil[r][c] ? 0 : GROUND_LIP * D);
     }
+    // ------------------------------------------------------------------ rounded shapes (0.25)
+    /** A rounded-edge height field over a pixel grid of labels (0 = outside). Per pixel, the chamfer (3-4) distance to
+     *  the nearest pixel with another label; per pixel corner, a quarter-round profile 0..1: 0 where labels meet (or
+     *  touch outside), 1 from r px in. Outside the grid counts as more of the same (the margin is off screen). */
+    static final class Field {
+        int w, h; float r;
+        int[] lab = new int[0], d = new int[0];
+        float[] v = new float[0];
+        void size(int w, int h) {
+            this.w = w; this.h = h;
+            if (lab.length < w * h) { lab = new int[w * h]; d = new int[w * h]; }
+            if (v.length < (w + 1) * (h + 1)) v = new float[(w + 1) * (h + 1)];
+            Arrays.fill(lab, 0, w * h, 0);
+        }
+        private int nb(int i, int j) { return lab[j] == lab[i] ? d[j] : 0; }
+        void solve(float r) {
+            this.r = r;
+            final int INF = 1 << 20;
+            for (int i = 0; i < w * h; i++) d[i] = lab[i] == 0 ? 0 : INF;
+            for (int py = 0; py < h; py++) for (int px = 0; px < w; px++) {
+                int i = py * w + px, e = d[i];
+                if (e == 0) continue;
+                if (px > 0) e = Math.min(e, nb(i, i - 1) + 3);
+                if (py > 0) {
+                    e = Math.min(e, nb(i, i - w) + 3);
+                    if (px > 0) e = Math.min(e, nb(i, i - w - 1) + 4);
+                    if (px < w - 1) e = Math.min(e, nb(i, i - w + 1) + 4);
+                }
+                d[i] = e;
+            }
+            for (int py = h - 1; py >= 0; py--) for (int px = w - 1; px >= 0; px--) {
+                int i = py * w + px, e = d[i];
+                if (e == 0) continue;
+                if (px < w - 1) e = Math.min(e, nb(i, i + 1) + 3);
+                if (py < h - 1) {
+                    e = Math.min(e, nb(i, i + w) + 3);
+                    if (px < w - 1) e = Math.min(e, nb(i, i + w + 1) + 4);
+                    if (px > 0) e = Math.min(e, nb(i, i + w - 1) + 4);
+                }
+                d[i] = e;
+            }
+            for (int vy = 0; vy <= h; vy++) for (int vx = 0; vx <= w; vx++) {
+                float s = 0; int n = 0, l = -1; boolean edge = false;
+                for (int j = vy - 1; j <= vy; j++) for (int i = vx - 1; i <= vx; i++) {
+                    if (i < 0 || j < 0 || i >= w || j >= h) continue;
+                    int k = j * w + i;
+                    if (lab[k] == 0 || (l >= 0 && lab[k] != l)) { edge = true; continue; }
+                    l = lab[k];
+                    float t = Math.min(d[k] / 3f - 0.5f, r) / r, u = 1 - t;
+                    s += (float) Math.sqrt(Math.max(0, 1 - u * u)); n++;
+                }
+                v[vy * (w + 1) + vx] = edge || n == 0 ? 0 : s / n;
+            }
+        }
+        float at(int vx, int vy) {
+            vx = Math.max(0, Math.min(w, vx)); vy = Math.max(0, Math.min(h, vy));
+            return v[vy * (w + 1) + vx];
+        }
+        boolean in(int px, int py) { return px >= 0 && py >= 0 && px < w && py < h && lab[py * w + px] != 0; }
+        /** Shade of the surface z = base + hz * at() (back: base - hz * at(), facing away) at a vertex. */
+        float shade(int vx, int vy, float hz, boolean back) {
+            float dx = hz * (at(vx + 1, vy) - at(vx - 1, vy)) / 2, dy = hz * (at(vx, vy + 1) - at(vx, vy - 1)) / 2;
+            return back ? shadeN(dx, -dy, -1) : shadeN(-dx, dy, 1);     // grid y runs down, world y up
+        }
+    }
+    private static final float LX = -0.3f, LY = 0.55f, LZ = 0.78f;
+    /** Lambert shade for a surface normal (lit from the upper left), 1 for a face turned to the camera. */
+    static float shadeN(float nx, float ny, float nz) {
+        float l = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+        float d = Math.max(0, (nx * LX + ny * LY + nz * LZ) / l);
+        return Math.max(0.4f, (0.42f + 0.58f * d) / (0.42f + 0.58f * LZ));
+    }
+    // one quad with its own per-corner position, texture and shade: corners bottom-left, bottom-right, top-right,
+    // top-left as seen from the front; back = wound the other way (seen from behind)
+    private final float[] cq = new float[24];
+    private void corner(int k, float x, float y, float z, float u, float v, float s) {
+        cq[k * 6] = x; cq[k * 6 + 1] = y; cq[k * 6 + 2] = z; cq[k * 6 + 3] = u; cq[k * 6 + 4] = v; cq[k * 6 + 5] = s;
+    }
+    private static final int[] FRONT = { 0, 1, 2, 0, 2, 3 }, BACKW = { 0, 2, 1, 0, 3, 2 };
+    private void emit(float kind, boolean back) {
+        for (int k : back ? BACKW : FRONT) push(cq[k * 6], cq[k * 6 + 1], cq[k * 6 + 2], cq[k * 6 + 3], cq[k * 6 + 4], cq[k * 6 + 5], kind);
+    }
+    private void tri(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, float u, float v, float s, float kind) {
+        push(ax, ay, az, u, v, s, kind); push(bx, by, bz, u, v, s, kind); push(cx, cy, cz, u, v, s, kind);
+    }
+
+    // Clouds were a box per tile, so they read as slabs. Now each cloud is inflated from its own outline: the field over
+    // its opaque pixels sets a rounded height, 0 at the outline and full PILLOW_R px in, and the front and back surfaces
+    // bulge that far either side of the block's middle plane, meeting at the outline. Shading follows the surface; the
+    // game's art stays the texture, drawn as kind 4: cut out like kind 2, and the shader turns the black of the
+    // checkered top pink (harsh on the curves).
+    static final float PILLOW_R = 6f;
+    private final Field cloudF = new Field();
+    private void pillow(byte[] f, int[][] cls, int[][] ent, boolean[][] cut, int rows, int cols) {
+        int w = cols * 8, h = rows * 8;
+        cloudF.size(w, h);
+        for (int py = 0; py < h; py++) for (int px = 0; px < w; px++) {
+            int r = (py >> 3) + 1, c = (px >> 3) + 1, e = ent[r][c];
+            if (cls[r][c] == BLOCK && cut[r][c] && e >= 0) {
+                int tx = px & 7, ty = py & 7;
+                if ((e & 0x400) != 0) tx = 7 - tx;
+                if ((e & 0x800) != 0) ty = 7 - ty;
+                if (bgPixel(f, bg[0].cb, e & 0x3FF, tx, ty) != 0) cloudF.lab[py * w + px] = 1;
+            }
+        }
+        cloudF.solve(PILLOW_R);
+    }
+    /** One 8x8 cloud cell as pillow surfaces, in 2 px steps; (gx, gy) = its pixel in the grid. */
+    private void pillowCell(int gx, int gy, float x0, float y0, float zm, float hz, float ua, float ub, float va, float vb) {
+        Field p = cloudF;
+        for (int sy = 0; sy < 8; sy += 2) for (int sx = 0; sx < 8; sx += 2) {
+            int x = gx + sx, y = gy + sy;
+            if (!p.in(x, y) && !p.in(x + 1, y) && !p.in(x, y + 1) && !p.in(x + 1, y + 1)) continue;
+            int[] lx = { sx, sx + 2, sx + 2, sx }, ly = { sy + 2, sy + 2, sy, sy };
+            for (int side = 0; side < 2; side++) {
+                for (int k = 0; k < 4; k++) {
+                    int vx = gx + lx[k], vy = gy + ly[k];
+                    float hgt = hz * p.at(vx, vy);
+                    corner(k, x0 + lx[k], y0 - ly[k], side == 0 ? zm + hgt : zm - hgt,
+                           ua + (ub - ua) * lx[k] / 8f, va + (vb - va) * ly[k] / 8f, p.shade(vx, vy, hz, side == 1));
+                }
+                emit(4, side == 1);
+            }
+        }
+    }
+
+    // Hills (1-1, 3-1, 5-1 ...) keep their flat fronts but round off where they end: a quarter round HILL_R px wide
+    // (and as deep, at most HILL_RZ of the block depth) along every edge of a hill's front, from a field over the hill
+    // cells labelled by how far forward they sit, so a hill stepping in front of another rounds where they meet too.
+    static final float HILL_R = 5f, HILL_RZ = 0.3f;
+    private final Field hillF = new Field();
+    private void hillField(int[][] cls, boolean[][] hil, int[][] nst, int rows, int cols) {
+        int w = cols * 8, h = rows * 8;
+        hillF.size(w, h);
+        for (int r = 1; r <= rows; r++) for (int c = 1; c <= cols; c++) if (cls[r][c] == BLOCK && hil[r][c]) {
+            int l = 1 + nst[r][c];
+            for (int py = (r - 1) * 8; py < r * 8; py++) Arrays.fill(hillF.lab, py * w + (c - 1) * 8, py * w + c * 8, l);
+        }
+        hillF.solve(HILL_R);
+    }
+    /** Front of one hill cell at zt, dipping by rz toward its edges; one flat quad when no edge is near. */
+    private void hillFront(int gx, int gy, float x0, float y0, float zt, float rz, float ua, float ub, float va, float vb) {
+        Field p = hillF;
+        boolean flat = true;
+        for (int j = 0; j <= 8 && flat; j += 2) for (int i = 0; i <= 8; i += 2) if (p.at(gx + i, gy + j) < 1) { flat = false; break; }
+        if (flat) { quad(x0, y0 - 8, zt, x0 + 8, y0 - 8, zt, x0 + 8, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, 0); return; }
+        for (int sy = 0; sy < 8; sy += 2) for (int sx = 0; sx < 8; sx += 2) {
+            int[] lx = { sx, sx + 2, sx + 2, sx }, ly = { sy + 2, sy + 2, sy, sy };
+            for (int k = 0; k < 4; k++) {
+                int vx = gx + lx[k], vy = gy + ly[k];
+                corner(k, x0 + lx[k], y0 - ly[k], zt - rz * (1 - p.at(vx, vy)),
+                       ua + (ub - ua) * lx[k] / 8f, va + (vb - va) * ly[k] / 8f, p.shade(vx, vy, rz, false));
+            }
+            emit(0, false);
+        }
+    }
+
+    // Jars (21A-21F) are upright cylinders: half in front of the block's middle plane and half behind, radius 8 across
+    // the metatile and rz in depth. Logs (220-222 outside the desert) lie along x and fill the block's depth like the box
+    // they were (banks line up with them and the player stands on them): round at the front and the back (radius rz
+    // about zf1 and zb1) with a flat top and bottom between. The art wraps round by angle (projected straight on, the
+    // outline columns stretched over the curve's sides as dark bands from an angle). A jar's top gets a lid, a log's ends
+    // their cut face.
+    static final int CYL_SEG = 4;
+    /** The cylinder through one 8x8 cell (corner x0, y0 in world units); axis = screen x of a jar's axis or screen y of
+     *  a log's; the front half curves about z = zf1, the back half about zb1 (the same for a jar). */
+    private void cylCell(boolean jar, float x0, float y0, float axis, float zf1, float zb1, float rz, float ua, float ub, float va, float vb) {
+        float a = jar ? x0 - axis : -y0 - axis, q = (float) Math.PI / 16;
+        float t0 = a * q, t1 = (a + 8) * q;
+        for (int i = 0; i < CYL_SEG; i++) {
+            float ta = t0 + (t1 - t0) * i / CYL_SEG, tb = t0 + (t1 - t0) * (i + 1) / CYL_SEG, fa = i / (float) CYL_SEG, fb = (i + 1) / (float) CYL_SEG;
+            float sa = 8 * (float) Math.sin(ta), sb = 8 * (float) Math.sin(tb), ca = (float) Math.cos(ta), cb = (float) Math.cos(tb);
+            for (int side = 0; side < 2; side++) {
+                float g = side == 0 ? 1 : -1, zc = side == 0 ? zf1 : zb1, za = zc + g * rz * ca, zb = zc + g * rz * cb;
+                if (jar) {
+                    float xa = axis + sa, xb = axis + sb, uA = ua + (ub - ua) * fa, uB = ua + (ub - ua) * fb;
+                    float shA = shadeN((float) Math.sin(ta), 0, g * ca), shB = shadeN((float) Math.sin(tb), 0, g * cb);
+                    corner(0, xa, y0 - 8, za, uA, vb, shA); corner(1, xb, y0 - 8, zb, uB, vb, shB);
+                    corner(2, xb, y0, zb, uB, va, shB); corner(3, xa, y0, za, uA, va, shA);
+                } else {
+                    float ya = axis + sa, yb = axis + sb, vA = va + (vb - va) * fa, vB = va + (vb - va) * fb;
+                    float shA = shadeN(0, -(float) Math.sin(ta), g * ca), shB = shadeN(0, -(float) Math.sin(tb), g * cb);
+                    corner(0, x0, -yb, zb, ua, vB, shB); corner(1, x0 + 8, -yb, zb, ub, vB, shB);
+                    corner(2, x0 + 8, -ya, za, ub, vA, shA); corner(3, x0, -ya, za, ua, vA, shA);
+                }
+                emit(2, side == 1);
+            }
+        }
+        if (jar || zf1 <= zb1) return;
+        // a log's flat top (the cell holding the top of the round) and bottom, from the back round to the front one,
+        // textured with the wood inside the outline (its rows 2-6 across the depth; row 0 is the dark outline)
+        float wa = va + (vb - va) * 0.25f, wb = va + (vb - va) * 0.75f;
+        if (a <= -8) { float y = -(axis - 8); quad(x0, y, zf1, x0 + 8, y, zf1, x0 + 8, y, zb1, x0, y, zb1, ua, wa, ub, wa, ub, wb, ua, wb, 0.86f, 2); }
+        if (a + 8 >= 8) { float y = -(axis + 8); quad(x0, y, zb1, x0 + 8, y, zb1, x0 + 8, y, zf1, x0, y, zf1, ua, wb, ub, wb, ub, wa, ua, wa, 0.45f, 2); }
+    }
+    /** A jar's lid (at world y = y0) or a log's end (at x0 or x0 + 8; end = -1 left, 1 right) across one cell's slice. */
+    private void cylCap(boolean jar, float x0, float y0, float axis, float zf1, float zb1, float rz, float u, float v, int end) {
+        float a = jar ? x0 - axis : -y0 - axis, q = (float) Math.PI / 16;
+        float t0 = a * q, t1 = (a + 8) * q;
+        float s = jar ? 0.92f : 0.66f;
+        for (int i = 0; i < CYL_SEG; i++) {
+            float ta = t0 + (t1 - t0) * i / CYL_SEG, tb = t0 + (t1 - t0) * (i + 1) / CYL_SEG;
+            float sa = 8 * (float) Math.sin(ta), sb = 8 * (float) Math.sin(tb), ca = rz * (float) Math.cos(ta), cb = rz * (float) Math.cos(tb);
+            if (jar) {   // facing up: (centre, a, b) in front of the axis, (centre, b, a) behind
+                float yy = y0, xa = axis + sa, xb = axis + sb;
+                tri(axis, yy, zf1, xa, yy, zf1 + ca, xb, yy, zf1 + cb, u, v, s, 0);
+                tri(axis, yy, zb1, xb, yy, zb1 - cb, xa, yy, zb1 - ca, u, v, s, 0);
+            } else {     // facing -x (left end) or +x (right end): the two half rounds and the band between them
+                float xx = end < 0 ? x0 : x0 + 8, ya = -(axis + sa), yb = -(axis + sb), yc = -axis;
+                if (end > 0) { tri(xx, yc, zf1, xx, ya, zf1 + ca, xx, yb, zf1 + cb, u, v, s, 0); tri(xx, yc, zb1, xx, yb, zb1 - cb, xx, ya, zb1 - ca, u, v, s, 0); }
+                else { tri(xx, yc, zf1, xx, yb, zf1 + cb, xx, ya, zf1 + ca, u, v, s, 0); tri(xx, yc, zb1, xx, ya, zb1 - ca, xx, yb, zb1 - cb, u, v, s, 0); }
+            }
+        }
+        if (jar || zf1 <= zb1) return;
+        float xx = end < 0 ? x0 : x0 + 8, yt = -(axis + 8 * (float) Math.sin(t0)), yb = -(axis + 8 * (float) Math.sin(t1));
+        // band A (top, back) B (top, front) C (bottom, front) D (bottom, back); A B C faces +x
+        if (end > 0) { tri(xx, yt, zb1, xx, yt, zf1, xx, yb, zf1, u, v, s, 0); tri(xx, yt, zb1, xx, yb, zf1, xx, yb, zb1, u, v, s, 0); }
+        else { tri(xx, yt, zb1, xx, yb, zf1, xx, yt, zf1, u, v, s, 0); tri(xx, yt, zb1, xx, yb, zb1, xx, yb, zf1, u, v, s, 0); }
+    }
+
+    // Ice (4-x), bone (desert) and sand blocks are separate blocks in the art: each metatile's front gets a BEVEL px
+    // chamfer on its four edges, mitred at the corners, so neighbours meet in a groove.
+    static final float BEVEL = 2f;
+    /** One cell of a bevelled block: its metatile's edges are on the left or right (left) and top or bottom (top). */
+    private void bevelCell(float x0, float y0, float zt, boolean left, boolean top, float ua, float ub, float va, float vb) {
+        float b = BEVEL, x1 = x0 + 8, y1 = y0 - 8, zo = zt - b;
+        float ixl = left ? x0 + b : x0, ixr = left ? x1 : x1 - b, iyt = top ? y0 - b : y0, iyb = top ? y1 : y1 + b;
+        bv(0, ixl, iyb, zt); bv(1, ixr, iyb, zt); bv(2, ixr, iyt, zt); bv(3, ixl, iyt, zt); bvEmit(x0, y0, ua, ub, va, vb, 1f);
+        if (left) { bv(0, x0, y1, zo); bv(1, ixl, iyb, zt); bv(2, ixl, iyt, zt); bv(3, x0, y0, zo); bvEmit(x0, y0, ua, ub, va, vb, 0.8f); }
+        else { bv(0, ixr, iyb, zt); bv(1, x1, y1, zo); bv(2, x1, y0, zo); bv(3, ixr, iyt, zt); bvEmit(x0, y0, ua, ub, va, vb, 0.72f); }
+        if (top) { bv(0, ixl, iyt, zt); bv(1, ixr, iyt, zt); bv(2, x1, y0, zo); bv(3, x0, y0, zo); bvEmit(x0, y0, ua, ub, va, vb, 0.95f); }
+        else { bv(0, x0, y1, zo); bv(1, x1, y1, zo); bv(2, ixr, iyb, zt); bv(3, ixl, iyb, zt); bvEmit(x0, y0, ua, ub, va, vb, 0.55f); }
+    }
+    private void bv(int k, float x, float y, float z) { cq[k * 6] = x; cq[k * 6 + 1] = y; cq[k * 6 + 2] = z; }
+    /** Texture by straight projection onto the cell (corner x0, y0), then emit. */
+    private void bvEmit(float x0, float y0, float ua, float ub, float va, float vb, float s) {
+        for (int k = 0; k < 4; k++) {
+            cq[k * 6 + 3] = ua + (ub - ua) * (cq[k * 6] - x0) / 8; cq[k * 6 + 4] = va + (vb - va) * (y0 - cq[k * 6 + 1]) / 8; cq[k * 6 + 5] = s;
+        }
+        emit(0, false);
+    }
+
+    // Grass, vines and palm tops are flat cut-outs, paper-thin from the diorama and low cameras. A second copy turned
+    // 90 degrees about the metatile's vertical centre line crosses the first, so they have body from any side.
+    private void crossCell(float x0, float y0, float mcx, float ua, float ub, float va, float vb) {
+        float za = x0 - mcx, zb = za + 8;
+        for (int side = 0; side < 2; side++) {
+            corner(0, mcx, y0 - 8, za, ua, vb, 0.85f); corner(1, mcx, y0 - 8, zb, ub, vb, 0.85f);
+            corner(2, mcx, y0, zb, ub, va, 0.85f); corner(3, mcx, y0, za, ua, va, 0.85f);
+            emit(2, side == 1);
+        }
+    }
+
+    // Water (1-x / 3-x pools 004 / 005, 4-x sea 008 / 00A) stood upright as a wall of waves. Now it is a volume: its front
+    // (the game's art, waves on top) a little behind the ground's front edge, and a level surface from there back,
+    // textured with the water body, so blocks and logs sit in it.
+    static final float WATER_BACK = 0.25f;   // front, as a fraction of the block depth behind the ground's front plane
+    private void water(byte[] f, int[][] shp, int[][] cls, int[][] nst, boolean[][] hil, int[][] ent, int r, int c,
+                       float x0, float y0, float zf, float zb, int D, float ua, float ub, float va, float vb) {
+        float x1 = x0 + 8, y1 = y0 - 8, zw = zf + nst[r][c] * D * HILL_STEP - WATER_BACK * D;
+        quad(x0, y1, zw, x1, y1, zw, x1, y0, zw, x0, y0, zw, ua, vb, ub, vb, ub, va, ua, va, 1f, 2);
+        float sa = (ua + ub) / 2, mv = (va + vb) / 2;
+        if (shp[r][c - 1] != SH_WATER && blockFront(cls, nst, hil, r, c - 1, zf, D) < zw)
+            quad(x0, y1, zb, x0, y1, zw, x0, y0, zw, x0, y0, zb, sa, vb, sa, vb, sa, va, sa, va, 0.66f, 2);
+        if (shp[r][c + 1] != SH_WATER && blockFront(cls, nst, hil, r, c + 1, zf, D) < zw)
+            quad(x1, y1, zw, x1, y1, zb, x1, y0, zb, x1, y0, zw, sa, vb, sa, vb, sa, va, sa, va, 0.66f, 2);
+        if (shp[r - 1][c] == SH_WATER) return;
+        // the surface: level with the top of the waves in this column of cells, textured with the body below
+        int e = ent[r][c], top = 8;
+        for (int ty = 0; ty < 8 && top == 8; ty++) for (int tx = 0; tx < 8; tx++) {
+            int px = (e & 0x400) != 0 ? 7 - tx : tx, py = (e & 0x800) != 0 ? 7 - ty : ty;
+            if (bgPixel(f, bg[0].cb, e & 0x3FF, px, py) != 0) { top = ty; break; }
+        }
+        if (top == 8) return;
+        float ys = y0 - top;
+        int eb = shp[r + 1][c] == SH_WATER ? ent[r + 1][c] : e;
+        uvSlot(slot(f, false, bg[0].cb, eb & 0x3FF, eb >> 12, true));
+        float ba = (eb & 0x400) != 0 ? u1 : u0, bb = (eb & 0x400) != 0 ? u0 : u1, bva = (eb & 0x800) != 0 ? v1 : v0, bvb = (eb & 0x800) != 0 ? v0 : v1;
+        for (float z = zw; z > zb + 0.01f; z -= 8) {
+            float z2 = Math.max(zb, z - 8), vz = bva + (bvb - bva) * (z - z2) / 8;
+            quad(x0, ys, z, x1, ys, z, x1, ys, z2, x0, ys, z2, ba, bva, bb, bva, bb, vz, ba, vz, 0.95f, 0);
+        }
+    }
+    static final int SH_NONE = 0, SH_JAR = 1, SH_LOG = 2, SH_WATER = 3, SH_CROSS = 4, SH_BEVEL = 5;
+    private static int shapeOf(int t, int ws) {
+        if (t < 0) return SH_NONE;
+        if (t >= 0x21A && t <= 0x21F) return SH_JAR;
+        if (t >= 0x220 && t <= 0x222) return ws == 1 || ws == 5 ? SH_BEVEL : SH_LOG;
+        if (t == 0x104 || t == 0x117) return SH_BEVEL;
+        if ((t == 0x004 || t == 0x005) && ws != 1 && ws != 5 && ws != 6) return SH_WATER;
+        if ((t == 0x008 || t == 0x00A) && ws == 3) return SH_WATER;
+        if ((t >= 0x025 && t <= 0x02F) || (t >= 0x095 && t <= 0x09C) || (t >= 0x059 && t <= 0x05C)) return SH_CROSS;
+        return SH_NONE;
+    }
+
+    // Round sprites (option, 0.25): instead of thick walls, each sprite is inflated like the clouds from its outline, in a
+    // field over the screen where every object (its OAM group) has its own label, so a character made of several sprites
+    // rounds as one. The front bulges ROUND_T forward of its plane and the back as far behind.
+    static final float ROUND_R = 4f, ROUND_T = 3f;
+    volatile boolean round = false;
+    private final Field spriteF = new Field();
+    private boolean roundable(int s, int a0, int a1) {
+        if ((a0 & 0x300) == 0x200 || ((a0 >> 10) & 3) == 2 || (a0 & 0x2000) != 0 || (a0 >> 14) == 3 || (a0 & 0x100) != 0) return false;
+        int x = a1 & 511;
+        return thick && !member[s] && !(s < 8 && x == 0);
+    }
+    private void spriteField(byte[] f, boolean map1d) {
+        spriteF.size(W, H);
+        for (int s = 127; s >= 0; s--) {
+            int a0 = u16(f, OAM + s * 8), a1 = u16(f, OAM + s * 8 + 2), a2 = u16(f, OAM + s * 8 + 4);
+            if (!roundable(s, a0, a1)) continue;
+            int w = OBJ_SIZES[(a0 >> 14) * 4 + (a1 >> 14)][0], h = OBJ_SIZES[(a0 >> 14) * 4 + (a1 >> 14)][1];
+            int y = a0 & 255, x = a1 & 511, tile = a2 & 0x3FF, l = (box[s] != null ? gRoot[s] : s) + 1;
+            if (y >= 160) y -= 256;
+            if (x >= 240) x -= 512;
+            for (int sy = Math.max(0, y); sy < Math.min(H, y + h); sy++) for (int sx = Math.max(0, x); sx < Math.min(W, x + w); sx++) {
+                int tx = sx - x, ty = sy - y;
+                if ((a1 & 0x1000) != 0) tx = w - 1 - tx;
+                if ((a1 & 0x2000) != 0) ty = h - 1 - ty;
+                int t = (tile + (ty >> 3) * (map1d ? w / 8 : 32) + (tx >> 3)) & 0x3FF;
+                int o = VRAM + 0x10000 + t * 32 + (ty & 7) * 4 + ((tx & 7) >> 1);
+                if (o < VRAM + 0x18000 && ((u8(f[o]) >> ((tx & 1) * 4)) & 15) != 0) spriteF.lab[sy * W + sx] = l;
+            }
+        }
+        spriteF.solve(ROUND_R);
+    }
+    /** One 8x8 sprite tile (slot sl, screen corner qx, qy) as a rounded front and back, in 2 px steps. */
+    private void roundTile(int sl, float qx, float qy, boolean hf, boolean vf, float zs, float kind) {
+        int ax = (sl % (ATLAS_W / 8)) * 8, ay = (sl / (ATLAS_W / 8)) * 8;
+        uvSlot(sl);
+        float ua = hf ? u1 : u0, ub = hf ? u0 : u1, va = vf ? v1 : v0, vb = vf ? v0 : v1;
+        int gx = Math.round(qx), gy = Math.round(qy);
+        for (int sy = 0; sy < 8; sy += 2) for (int sx = 0; sx < 8; sx += 2) {
+            boolean any = false;
+            for (int j = 0; j < 2 && !any; j++) for (int i = 0; i < 2; i++)
+                if (opaqueTexel(ax, ay, hf ? 7 - sx - i : sx + i, vf ? 7 - sy - j : sy + j)) { any = true; break; }
+            if (!any) continue;
+            int[] lx = { sx, sx + 2, sx + 2, sx }, ly = { sy + 2, sy + 2, sy, sy };
+            for (int side = 0; side < 2; side++) {
+                for (int k = 0; k < 4; k++) {
+                    int vx = gx + lx[k], vy = gy + ly[k];
+                    float hgt = ROUND_T * spriteF.at(vx, vy);
+                    corner(k, qx + lx[k], -qy - ly[k], side == 0 ? zs + hgt : zs - hgt,
+                           ua + (ub - ua) * lx[k] / 8f, va + (vb - va) * ly[k] / 8f, sShade * spriteF.shade(vx, vy, ROUND_T, side == 1));
+                }
+                emit(kind, side == 1);
+            }
+        }
+    }
+    /** blockFront for hiding a neighbour's side face: a jar or log doesn't fill its cell, so the face next to it stays. */
+    private static float solidFront(int[][] cls, int[][] nst, boolean[][] hil, int[][] shp, int r, int c, float zf, int D) {
+        return shp[r][c] == SH_JAR || shp[r][c] == SH_LOG ? Float.NEGATIVE_INFINITY : blockFront(cls, nst, hil, r, c, zf, D);
+    }
     private static int fdiv(int a, int b) { int r = a / b; if ((a % b != 0) && ((a < 0) != (b < 0))) r--; return r; }
 
     /** camDist: distance from the camera to the z = 0 plane (for the backdrop scale). */
@@ -416,6 +774,8 @@ final class Scene3D {
         int cols = fdiv(b.hofs + W - 1, 8) + M - tx0 + 1, rows = fdiv(b.vofs + H - 1, 8) + M - ty0 + 1;
         int[][] cls = new int[rows + 2][cols + 2], ent = new int[rows + 2][cols + 2], nst = new int[rows + 2][cols + 2];
         boolean[][] hil = new boolean[rows + 2][cols + 2], cut = new boolean[rows + 2][cols + 2];
+        int[][] shp = new int[rows + 2][cols + 2];
+        int ws = mapped ? var16(f, 0x030019FC) : -1;       // world graphics set (RAM-MAP)
         int[][][] pyr = new int[rows + 2][cols + 2][];
         pyrMemo.clear();
         if (mapped) hills(f);
@@ -445,6 +805,10 @@ final class Scene3D {
             int mt = mapped ? meta(f, camX + sx + 4, camY + sy + 4) : -1;
             hil[r + 1][c + 1] = mt >= 0 && hill(mt);
             cut[r + 1][c + 1] = cloud(mt);
+            int sh = mapped && k != SKY ? shapeOf(mt, ws) : SH_NONE;
+            if (sh == SH_CROSS && k != PROP) sh = SH_NONE;
+            if (sh == SH_WATER) cls[r + 1][c + 1] = PROP;      // not a block: its neighbours keep their side faces
+            shp[r + 1][c + 1] = sh;
         }
         // Bodies under a ledge (hills, houses, trunks under their caps): SMA's hill tops are stand-on-top metatiles
         // (blocks) but the bodies are plain opaque scenery (back wall), so the cap stuck out as a separate slab over a
@@ -453,6 +817,7 @@ final class Scene3D {
         if (mapped) for (int c = 0; c < cols + 2; c++) for (int r = 1; r < rows + 2; r++) {
             if (cls[r - 1][c] != BLOCK) continue;
             int k = cls[r][c], e = ent[r][c];
+            if (shp[r][c] == SH_WATER) continue;
             if (k == BACK || (k == PROP && e >= 0 && opaquePixels(f, b.cb, e & 0x3FF) >= 40)) cls[r][c] = BLOCK;
         }
         // The ground under a hill that comes forward comes forward with it (0.14): otherwise the hill's front face stood
@@ -480,19 +845,30 @@ final class Scene3D {
             }
             c = e + 1;
         }
+        boolean clouds = false;
+        for (int r = 1; r <= rows && !clouds; r++) for (int c = 1; c <= cols; c++) if (cut[r][c] && cls[r][c] == BLOCK) { clouds = true; break; }
+        if (clouds) pillow(f, cls, ent, cut, rows, cols);
+        if (mapped) hillField(cls, hil, nst, rows, cols);
         for (int r = 0; r < rows; r++) for (int c = 0; c < cols; c++) {
             int k = cls[r + 1][c + 1];
             if (k == SKY) continue;
-            int e = ent[r + 1][c + 1];
+            int e = ent[r + 1][c + 1], sh = shp[r + 1][c + 1];
             boolean cl = cut[r + 1][c + 1];
-            uvSlot(slot(f, false, b.cb, e & 0x3FF, e >> 12, k == BLOCK && !cl));
+            boolean clear = cl || sh == SH_JAR || sh == SH_LOG || sh == SH_WATER;   // shapes with their own outline
+            uvSlot(slot(f, false, b.cb, e & 0x3FF, e >> 12, k == BLOCK && !clear));
             float ua = (e & 0x400) != 0 ? u1 : u0, ub = (e & 0x400) != 0 ? u0 : u1, va = (e & 0x800) != 0 ? v1 : v0, vb = (e & 0x800) != 0 ? v0 : v1;
             float x0 = (tx0 + c) * 8 - b.hofs, x1 = x0 + 8, y0 = -((ty0 + r) * 8 - b.vofs), y1 = y0 - 8;
+            int wx = camX + Math.round(x0), wy = camY - Math.round(y0);          // the cell's world pixel
+            if (sh == SH_WATER) { water(f, shp, cls, nst, hil, ent, r + 1, c + 1, x0, y0, zf, zb, D, ua, ub, va, vb); continue; }
             if (k == BACK) {
                 if (!backOff) quad(x0, y1, backZ, x1, y1, backZ, x1, y0, backZ, x0, y0, backZ, ua, vb, ub, vb, ub, va, ua, va, 0.8f, 1);
                 continue;
             }
-            if (k == PROP) { quad(x0, y1, 0, x1, y1, 0, x1, y0, 0, x0, y0, 0, ua, vb, ub, vb, ub, va, ua, va, 1f, 2); continue; }
+            if (k == PROP) {
+                quad(x0, y1, 0, x1, y1, 0, x1, y0, 0, x0, y0, 0, ua, vb, ub, vb, ub, va, ua, va, 1f, 2);
+                if (sh == SH_CROSS) crossCell(x0, y0, (wx & ~15) + 8 - camX, ua, ub, va, vb);
+                continue;
+            }
             if (k == PYR) {
                 // the cell lies on one face (the ridge is on a 16 px boundary); the face is a plane, so the quad is flat.
                 // Clear texels of the slope tiles drop out (kind 2), leaving the triangle's own outline.
@@ -507,16 +883,33 @@ final class Scene3D {
             }
             // front hills come forward (thicker toward the camera); a face is drawn where the neighbour isn't a block or
             // sits further back
-            float zt = blockFront(cls, nst, hil, r + 1, c + 1, zf, D), fk = cl ? 2 : 0;
-            quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, fk);
-            // a cloud's top / bottom take its middle row and its sides its middle column (the white body, cut where the
-            // cloud is clear) instead of the whole tile squeezed through the depth, which streaked the outline across
+            float zt = blockFront(cls, nst, hil, r + 1, c + 1, zf, D), fk = 0;
+            if (cl) { pillowCell(c * 8, r * 8, x0, y0, (zt + zb) / 2, (zt - zb) / 2, ua, ub, va, vb); continue; }
+            if (sh == SH_JAR || sh == SH_LOG) {
+                boolean jar = sh == SH_JAR;
+                float axis = jar ? (wx & ~15) + 8 - camX : (wy & ~15) + 8 - camY, zm = (zt + zb) / 2, rz = Math.min(8, (zt - zb) / 2);   // round, not deeper than wide
+                float z1 = jar ? zm : zt - rz, z2 = jar ? zm : zb + rz;
+                cylCell(jar, x0, y0, axis, z1, z2, rz, ua, ub, va, vb);
+                int mt = meta(f, wx + 4, wy + 4);
+                if (jar && shp[r][c + 1] != SH_JAR) cylCap(true, x0, y0, axis, z1, z2, rz, (ua + ub) / 2, va + (vb - va) * 0.2f, 0);
+                if (!jar && mt == 0x220 && (wx & 15) == 0) cylCap(false, x0, y0, axis, z1, z2, rz, ua + (ub - ua) * 0.3f, (va + vb) / 2, -1);
+                if (!jar && mt == 0x222 && (wx & 15) == 8) cylCap(false, x0, y0, axis, z1, z2, rz, ua + (ub - ua) * 0.7f, (va + vb) / 2, 1);
+                continue;
+            }
+            // bevelled blocks and rounded hills bring their side faces in to where the front's edge now is
+            float zs = zt;
+            if (sh == SH_BEVEL) { bevelCell(x0, y0, zt, (wx & 15) == 0, (wy & 15) == 0, ua, ub, va, vb); zs = zt - BEVEL; }
+            else if (mapped && hil[r + 1][c + 1]) {
+                float rz = Math.min(HILL_R, (zt - zb) * HILL_RZ);
+                hillFront(c * 8, r * 8, x0, y0, zt, rz, ua, ub, va, vb);
+                zs = zt - rz;
+            }
+            else quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, fk);
             float ta = va, tb = vb, sa = ua, sb = ub;
-            if (cl) { ta = tb = (va + vb) / 2; sa = sb = (ua + ub) / 2; }
-            if (blockFront(cls, nst, hil, r, c + 1, zf, D) < zt) quad(x0, y0, zt, x1, y0, zt, x1, y0, zb, x0, y0, zb, ua, ta, ub, ta, ub, tb, ua, tb, 0.86f, fk);
-            if (blockFront(cls, nst, hil, r + 2, c + 1, zf, D) < zt) quad(x0, y1, zb, x1, y1, zb, x1, y1, zt, x0, y1, zt, ua, tb, ub, tb, ub, ta, ua, ta, 0.45f, fk);
-            if (blockFront(cls, nst, hil, r + 1, c, zf, D) < zt) quad(x0, y1, zb, x0, y1, zt, x0, y0, zt, x0, y0, zb, sa, vb, sb, vb, sb, va, sa, va, 0.66f, fk);
-            if (blockFront(cls, nst, hil, r + 1, c + 2, zf, D) < zt) quad(x1, y1, zt, x1, y1, zb, x1, y0, zb, x1, y0, zt, sa, vb, sb, vb, sb, va, sa, va, 0.66f, fk);
+            if (solidFront(cls, nst, hil, shp, r, c + 1, zf, D) < zt) quad(x0, y0, zs, x1, y0, zs, x1, y0, zb, x0, y0, zb, ua, ta, ub, ta, ub, tb, ua, tb, 0.86f, fk);
+            if (solidFront(cls, nst, hil, shp, r + 2, c + 1, zf, D) < zt) quad(x0, y1, zb, x1, y1, zb, x1, y1, zs, x0, y1, zs, ua, tb, ub, tb, ub, ta, ua, ta, 0.45f, fk);
+            if (solidFront(cls, nst, hil, shp, r + 1, c, zf, D) < zt) quad(x0, y1, zb, x0, y1, zs, x0, y0, zs, x0, y0, zb, sa, vb, sb, vb, sb, va, sa, va, 0.66f, fk);
+            if (solidFront(cls, nst, hil, shp, r + 1, c + 2, zf, D) < zt) quad(x1, y1, zs, x1, y1, zb, x1, y0, zb, x1, y0, zs, sa, vb, sb, vb, sb, va, sa, va, 0.66f, fk);
         }
         // BG3 is the HUD (drawn flat on top) only while it is the frontmost layer, as in the levels (priority 0). On the
         // character select it is priority 3: the purple backdrop and the stage, which as a HUD covered the characters
@@ -598,6 +991,7 @@ final class Scene3D {
         oamBoxes(f);
         spriteDepths(f);
         platforms(f);
+        if (round) spriteField(f, map1d);
         boolean drawn = false;
         for (int s = 127; s >= 0; s--) {
             if (!member[s]) { sprite(f, s, map1d, b); continue; }
@@ -812,11 +1206,13 @@ final class Scene3D {
             }
             return;
         }
+        boolean rnd = round && roundable(s, a0, a1);
         for (int ty = 0; ty < h / 8; ty++) for (int tx = 0; tx < w / 8; tx++) {
             int stx = hf ? w / 8 - 1 - tx : tx, sty = vf ? h / 8 - 1 - ty : ty;
             int t = map1d ? tile + sty * (w / 8) + stx : tile + sty * 32 + stx;
             int sl = slot(f, true, 4, t & 0x3FF, pal);
             float qx = x + tx * 8, qy = y + ty * 8;
+            if (rnd) { roundTile(sl, qx, qy, hf, vf, zs, kind); continue; }
             if (ext) extrude(sl, hf ? qx + 8 : qx, vf ? qy + 8 : qy, hf ? -1 : 1, 0, 0, vf ? -1 : 1, zs, kind);
             uvSlot(sl);
             float ua = hf ? u1 : u0, ub = hf ? u0 : u1, va = vf ? v1 : v0, vb = vf ? v0 : v1;

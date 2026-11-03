@@ -10,6 +10,7 @@ public class SceneSeq {
     public static void main(String[] a) throws Exception {
         Scene3D s = new Scene3D();
         s.rom = Files.readAllBytes(Paths.get(a[0]));
+        s.round = System.getenv("ROUND") != null;      // the ROUND SPRITES option
         for (int k = 2; k < a.length; k++) {
             byte[] f = SceneDump.snap(Files.readAllBytes(Paths.get(a[k])));
             s.build(f, 300);

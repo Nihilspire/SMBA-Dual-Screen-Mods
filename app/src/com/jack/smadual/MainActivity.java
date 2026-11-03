@@ -49,7 +49,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.zip.CRC32;
 
 public class MainActivity extends Activity {
-    static final String VERSION = "0.23";
+    static final String VERSION = "0.27";
     static final int PICK_ROM = 1;
 
     SharedPreferences prefs;
@@ -290,6 +290,7 @@ public class MainActivity extends Activity {
         r3d.scene.rom = gfx.rom;
         r3d.scene.light = prefs.getBoolean("light3d", false);
         r3d.scene.thick = prefs.getBoolean("thick3d", true);
+        r3d.scene.round = prefs.getBoolean("round3d", false);
         glView.setVisibility(view3d ? View.VISIBLE : View.GONE);
         game.setVisibility(view3d ? View.INVISIBLE : View.VISIBLE);
         border3d.setVisibility(view3d ? View.VISIBLE : View.GONE);
@@ -403,11 +404,11 @@ public class MainActivity extends Activity {
     }
 
     /** The 3D cameras, in the order the hotkey and the menu step through them. */
-    static final String[] CAMS = { "low", "tilt", "far" };
+    static final String[] CAMS = { "low", "tilt", "diorama", "far" };
     String cam3d() {
         String c = prefs.getString("cam3d", "tilt");
         for (String k : CAMS) if (k.equals(c)) return c;
-        return "tilt";                                            // 0.21's diorama / side
+        return "tilt";                                            // 0.21's side
     }
 
     void cycleCamera() {
@@ -447,6 +448,7 @@ public class MainActivity extends Activity {
             s.put("cave3d", prefs.getBoolean("cave3d", true));
             s.put("light3d", prefs.getBoolean("light3d", false));
             s.put("thick3d", prefs.getBoolean("thick3d", true));
+            s.put("round3d", prefs.getBoolean("round3d", false));
             return s.toString();
         } catch (Exception e) { return "{}"; }
     }
@@ -756,6 +758,7 @@ public class MainActivity extends Activity {
                 s.put("cave3d", prefs.getBoolean("cave3d", true));
                 s.put("light3d", prefs.getBoolean("light3d", false));
                 s.put("thick3d", prefs.getBoolean("thick3d", true));
+                s.put("round3d", prefs.getBoolean("round3d", false));
                 s.put("border3d", prefs.getBoolean("border3d", true));
                 s.put("devUnlock", prefs.getBoolean("devUnlock", false));
                 s.put("codeHealth", prefs.getBoolean("codeHealth", false));

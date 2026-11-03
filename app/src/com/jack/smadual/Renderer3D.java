@@ -73,6 +73,8 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         "  vec4 c = texture2D(uTex, vUv);\n" +
         "  if (uMode == 2) { if (c.a < 0.5) discard; gl_FragColor = vec4(c.rgb, 1.0); return; }\n" +
         "  if (c.a < 0.5) { if (vKind < 0.5) c = vec4(uBg * 0.8, 1.0); else discard; }\n" +
+        "  if (vKind > 3.5 && vKind < 4.5) { float l = dot(c.rgb, vec3(0.3, 0.59, 0.11)); if (l < 0.5) c.rgb = mix(vec3(1.0, 0.74, 0.87), vec3(1.0), l * 1.6); }\n" +   // pillow cloud: its black checker in pink
+
         "  if (vKind > 4.5 && texture2D(uMask, vec2((vWorld.x + 0.5) / 256.0, (-vWorld.y + 0.5) / 256.0)).r > 0.5) discard;\n" +
         "  float shade = vShade;\n" +
         "  shade *= mix(1.0, mix(1.15, 0.35, smoothstep(24.0, 160.0, distance(vWorld.xy, uLight))), uLightOn);\n" +
@@ -135,10 +137,11 @@ final class Renderer3D implements GLSurfaceView.Renderer {
 
     @Override public void onSurfaceChanged(GL10 unused, int w, int h) { W = Math.max(1, w); H = Math.max(1, h); GLES20.glViewport(0, 0, W, H); }
 
-    /** Camera presets: pitch, yaw, zoom. 0.22 keeps three (MainActivity.CAMS); 0.21's diorama and side read as tilt. */
+    /** Camera presets: pitch, yaw, zoom. 0.22 kept three (MainActivity.CAMS); 0.25 brings diorama back; side reads as tilt. */
     static float[] preset(String n) {
         switch (n) {
             case "low": return new float[] { -10, 18, 1.05f };
+            case "diorama": return new float[] { 30, -24, 0.92f };
             case "far": return new float[] { 22, 0, 0.62f };
             default: return new float[] { 16, 0, 1 };
         }

@@ -128,13 +128,14 @@
       backRow();
     } else if (page === '3d') {
       opt('3D VIEW', onoff(s.dev3d), function () { set('dev3d', !s.dev3d); });
-      opt('CAMERA', String(s.cam3d || 'tilt').toUpperCase(), function (d) { cycle('cam3d', ['low', 'tilt', 'far'], d); });
+      opt('CAMERA', String(s.cam3d || 'tilt').toUpperCase(), function (d) { cycle('cam3d', ['low', 'tilt', 'diorama', 'far'], d); });
       opt('BLOCK DEPTH', String(s.depth3d || 16), function (d) {
         var v = (s.depth3d || 16) + 4 * (d || 1); if (v > 48) v = 4; if (v < 4) v = 48; set('depth3d', v); });
       opt('BACK WALL', { near: 'NEAR', far: 'DEEP', off: 'OFF' }[s.back3d] || 'NEAR', function (d) { cycle('back3d', ['near', 'far', 'off'], d); });
       opt('BACKGROUND', onoff(s.cave3d), function () { set('cave3d', !s.cave3d); });
       opt('PLAYER LIGHT', onoff(s.light3d), function () { set('light3d', !s.light3d); });
       opt('THICK SPRITES', onoff(s.thick3d !== false), function () { set('thick3d', !(s.thick3d !== false)); });
+      opt('ROUND SPRITES', onoff(s.round3d), function () { set('round3d', !s.round3d); });
       if (!info.linux) opt('3D BORDERS', onoff(s.border3d !== false), function () { set('border3d', !(s.border3d !== false)); });
       backRow();
     } else if (page === 'controls') {
