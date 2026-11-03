@@ -4,7 +4,7 @@
   var S = {};
   // ranges read every poll, in this order
   S.RANGES = [['file', 0x03001140, 0x30], ['st', 0x03001990, 0xA0], ['pl', 0x03001C30, 0xA0], ['vert', 0x0300116F, 1],
-              ['obj', 0x03001CF0, 0x70 * 16], ['mb', 0x03001DE0, 0x60], ['got', 0x03001A3E, 0x0E]];
+              ['obj', 0x03001CF0, 0x70 * 16], ['mb', 0x03001DE0, 0x60], ['got', 0x03001A3E, 0x26]];
   S.spec = S.RANGES.map(function (r) { return r[1].toString(16) + ':' + r[2]; }).join(',');
   S.hexBytes = function (h) { var a = new Uint8Array(h.length >> 1); for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16); return a; };
   S.parse = function (hex) {
@@ -17,7 +17,7 @@
   S.u8 = u8; S.u16 = u16;
 
   // Game state is three bytes: mode 19B0 (2 title/file menus, 3 SMB2, 4 Mario Bros. Classic), sub-mode 1991 (in mode 3:
-  // 0 character select / chart, 1 in a level) and 1992 (in a level: 1 playing, 0x0C/0x0D pause, 0x0F unpausing;
+  // 0 character select / chart, 1 in a level; more below) and 1992 (in a level: 1 playing, 0x0C/0x0D pause, 0x0F unpausing;
   // at character select: 1 choosing, 2 leaving, 5/6 chart). 1992 alone is 1 at character select too.
   S.mainState = function (m) { return u8(m, 'st', 0x03001992); };
   S.gameMode = function (m) { return u8(m, 'st', 0x030019B0); };
@@ -25,6 +25,24 @@
   S.inLevel = function (m) { return S.gameMode(m) === 3 && S.subMode(m) === 1; };
   S.playing = function (m) { return S.inLevel(m) && S.mainState(m) === 1; };
   S.charSelect = function (m) { return S.gameMode(m) === 3 && S.subMode(m) === 0 && S.mainState(m) === 1; };
+  // 0.23: the rest of mode 3's sub-modes (handlers at 0833D590): 2 Bonus Chance, 4 the ending, 5 / 6 the Yoshi
+  // Challenge screens. In Bonus Chance 03001A07 (the coin count) is the spins left and 1992 is 1 waiting, 2 spinning.
+  S.bonusChance = function (m) { return S.gameMode(m) === 3 && S.subMode(m) === 2; };
+  S.yoshiMenu = function (m) { return S.gameMode(m) === 3 && (S.subMode(m) === 5 || S.subMode(m) === 6); };
+  // The ending: 1992 steps through its own table (08349588): 1-6 Wart's room, 7 the parade, 8 the MVP stage, 0x0C
+  // Mario's dream, 0x10 the cast roll then THE END (waits for Start), 0x11 / 0x12 fade back to the title.
+  S.ending = function (m) { return S.gameMode(m) === 3 && S.subMode(m) === 4; };
+  S.endStage = function (m) { return S.mainState(m); };
+  // Levels cleared per character (the MVP stage's numbers, kept on the file): 03001148 + character index.
+  S.charClears = function (m, c) { return u8(m, 'file', 0x03001148 + c); };
+  S.beaten = function (m) { return u8(m, 'file', 0x03001162) !== 0; };
+  // In a level 1992 also runs: 3 life lost, 4-6 GAME OVER, 7/8 the menu after it, 9 door, 0x0A Subspace, 0x10 TRY AGAIN.
+  S.gameOver = function (m) { var s = S.mainState(m); return S.inLevel(m) && s >= 4 && s <= 8 && s !== 5; };
+  S.playerState = function (m) { return u8(m, 'pl', 0x03001C6F); };      // like SMB2's PlayerState: 7 dying, 0x0B at a door
+  S.dying = function (m) { return S.playerState(m) === 7; };
+  S.charge = function (m) { return u8(m, 'pl', 0x03001C7F); };           // power jump: +1 a frame while ducking, full at 60
+  S.cursorChar = function (m) { return u8(m, 'mb', 0x03001E01) & 3; };  // character select: the one under the cursor
+  S.menuCursor = function (m) { return u8(m, 'got', 0x03001A63); };      // pause / game-over menu: 0 CONTINUE ... 3 TRY AGAIN
   S.level = function (m) { return u8(m, 'file', 0x03001160); };
   S.lives = function (m) { return u8(m, 'file', 0x03001161); };
   S.score = function (m) { return u16(m, 'file', 0x0300114C) + u16(m, 'file', 0x0300114E) * 65536; };

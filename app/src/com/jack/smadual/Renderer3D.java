@@ -8,7 +8,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 
+import javax.microedition.khronos.egl.EGL10;
 import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.egl.EGLDisplay;
 import javax.microedition.khronos.opengles.GL10;
 
 /**
@@ -133,16 +135,34 @@ final class Renderer3D implements GLSurfaceView.Renderer {
 
     @Override public void onSurfaceChanged(GL10 unused, int w, int h) { W = Math.max(1, w); H = Math.max(1, h); GLES20.glViewport(0, 0, W, H); }
 
-    /** Camera presets: pitch, yaw, zoom. */
+    /** Camera presets: pitch, yaw, zoom. 0.22 keeps three (MainActivity.CAMS); 0.21's diorama and side read as tilt. */
     static float[] preset(String n) {
         switch (n) {
-            case "diorama": return new float[] { 30, -24, 0.92f };
-            case "side": return new float[] { 0, 0, 1 };
             case "low": return new float[] { -10, 18, 1.05f };
             case "far": return new float[] { 22, 0, 0.62f };
             default: return new float[] { 16, 0, 1 };
         }
     }
+
+    // 0.22: depth precision. With a 16-bit depth buffer and the near plane at 10 (0.6-0.21), depth resolved only ~0.12
+    // units at the scene (~280 from the eye), coarser than the gaps between some faces (back wall 0.01 behind the
+    // blocks, light and sprite walls 0.05, a bridge's underside level with the hill tops under its ends), so on phones
+    // ledges z-fought and flicked back a step as the camera moved (desktop SwiftShader has 24 bits and never showed it).
+    // Now 24 bits when the device has them, and near / far hug the scene: nothing comes within ~100 of the eye (deepest
+    // blocks at depth 48, nest 4) and the backdrop is at most ~500 away.
+    static final float NEAR = 40, FAR = 2000;
+    static final GLSurfaceView.EGLConfigChooser CONFIG = new GLSurfaceView.EGLConfigChooser() {
+        public EGLConfig chooseConfig(EGL10 egl, EGLDisplay dpy) {
+            for (int depth : new int[] { 24, 16 }) {
+                int[] spec = { EGL10.EGL_RED_SIZE, 8, EGL10.EGL_GREEN_SIZE, 8, EGL10.EGL_BLUE_SIZE, 8, EGL10.EGL_ALPHA_SIZE, 8,
+                               EGL10.EGL_DEPTH_SIZE, depth, EGL10.EGL_RENDERABLE_TYPE, 4 /* EGL_OPENGL_ES2_BIT */, EGL10.EGL_NONE };
+                EGLConfig[] cfg = new EGLConfig[1];
+                int[] n = new int[1];
+                if (egl.eglChooseConfig(dpy, spec, cfg, 1, n) && n[0] > 0) return cfg[0];
+            }
+            throw new IllegalArgumentException("no EGL config");
+        }
+    };
 
     /** MVP for the scene (world: x right, y up, GBA screen at x 0..240, y 0..-160). Also sets camDist. */
     static float[] mvp(int W, int H, float pitch, float yaw, float zoom, int depth, float[] distOut) {
@@ -154,7 +174,7 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         float cx = 120, cy = -80;
         float ex = cx + (float) (dist * Math.sin(y) * Math.cos(p)), ey = cy + (float) (dist * Math.sin(p)), ez = (float) (dist * Math.cos(y) * Math.cos(p));
         float[] proj = new float[16], viewM = new float[16], out = new float[16];
-        Matrix.perspectiveM(proj, 0, fov, asp, 10, 5000);
+        Matrix.perspectiveM(proj, 0, fov, asp, NEAR, FAR);
         Matrix.setLookAtM(viewM, 0, ex, ey, ez, cx, cy, 0, 0, 1, 0);
         Matrix.multiplyMM(out, 0, proj, 0, viewM, 0);
         return out;

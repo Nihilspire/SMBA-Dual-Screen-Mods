@@ -13,7 +13,7 @@ The game's code is unoptimised C (Thumb, `r7` frame pointer), so variables are p
 | Address | Meaning |
 |---|---|
 | `030019B0` | game mode: `02` title and file menus, `03` SMB2 (character select and play), `04` Mario Bros. Classic |
-| `03001991` | sub-mode. In mode 2: `01` title, `02` choose game, `03`–`04` file select, `05`–`06` later file menus. In mode 3: `00` character select / chart, `01` in a level |
+| `03001991` | sub-mode. In mode 2: `01` title, `02` choose game, `03`–`04` file select, `05`–`06` later file menus. In mode 3: `00` character select / chart, `01` in a level, `02` Bonus Chance, `04` the ending, `05` / `06` Yoshi Challenge screens (see "Mode 3 sub-modes") |
 | `03001992` | in a level (`1991 = 1`): `01` playing, `0C`/`0D` pause screen, `0F` unpausing. At character select (`1991 = 0`): `01` choosing, `02` leaving, `05`/`06` chart |
 
 **In a level and playing = `19B0 = 3` and `1991 = 1` and `1992 = 1`.** `1992 = 1` alone is also true at character
@@ -24,6 +24,70 @@ select (0.1 used that and was wrong there). Character select open = `19B0 = 3`, 
 | `0300116F` | 1 in vertical areas, 0 in horizontal ones |
 | `030019FC` | u16 **world graphics set** = world − 1 (0 grass … 3 ice … 6 sky). Set by a real level start; a level-number poke alone leaves it (world 1's look) unless it is poked too |
 | `03001A29` / `03001A4B` / `03001A2A` | level-renderer flags (`08029EC2`): metatiles `0x26E`–`0x2C5` are drawn as `(quad & 0xFF) \| 0x2200` when `030019FC` = 3 and `03001A29` = 0, as `(quad & 0x1FF) \| 0x6000` when `03001A4B` = 1; `03001A2A` = 2 draws everything mirrored (Subspace) |
+
+## In-level states, player state, cursors (0.23)
+
+In a level (`1991 = 01`) `1992` indexes the table at `08346BB4` (17 handlers). Found by poking each from a 1-2 state
+and by recording IWRAM every frame through a pit death and the potion door:
+
+| `1992` | Meaning |
+|---|---|
+| `00` | area init, then `01` |
+| `01` | playing |
+| `02` | reload a level from its start (a poke went to 1-1's start) |
+| `03` | **life lost**: after the dying animation (`03001C6F` = 07, ~180 frames) lives drop by one here, then `00` → `01` |
+| `04` → `06` | **GAME OVER** screen (Birdo, WORLD, TOP SCORE) |
+| `05` | fade (the shared `08001E2C`) |
+| `07` / `08` | the menu after GAME OVER: CONTINUE / SAVE AND CONTINUE / SAVE AND QUIT |
+| `09` | going through a door (the potion door: `09` → `0A`) |
+| `0A` | in Subspace |
+| `0B` | area transition (a poke leaves the screen half drawn) |
+| `0C` / `0D` | pause panel opening / open |
+| `0E` | pause panel with TRY AGAIN (from a poke) |
+| `0F` | unpausing |
+| `10` | restart the level (TRY AGAIN; then `01`) |
+
+| Address | Meaning |
+|---|---|
+| `03001C6F` | **player state**, like SMB2's `PlayerState`: `00` normal, `07` dying (health `03001C76` reads `00`), `0B` entering a door |
+| `03001C75` | player pose / animation frame (`01`/`02` walking, `0B` dying, `0D`/`0F` at a door) |
+| `03001C7F` | **power-jump charge**: +1 per frame while ducking, full at `3C` (60 frames; the character flashes), 0 when released |
+| `03001E01` | **character select cursor** = the character under it (0 Mario, 1 Peach, 2 Toad, 3 Luigi; Right steps 0 → 3 → 2 → 1, the screen's order). Poking it changes the name and stats shown |
+| `03001A63` | **pause / game-over menu cursor** (0 CONTINUE, 1 SAVE AND CONTINUE, 2 SAVE AND QUIT, 3 TRY AGAIN), followed Up/Down in a recording |
+
+## Mode 3 sub-modes and the ending (0.23)
+
+The main loop calls `[0833D5B4 + mode·4]` (mode 3 → `0800187C`), which calls `[0833D590 + sub·4]` with `1991`.
+Each was checked by poking `19B0`/`1991`/`1992` from a 7-1 state and watching the screen:
+
+| `1991` | Handler | Screen |
+|---|---|---|
+| `00` | `0802F590` | character select / chart |
+| `01` | `08047024` | in a level |
+| `02` | `0803268C` | **Bonus Chance** slot machine. `03001A07` (the coin count) = spins left, counting down; `03001161` lives go up on a win; `1992` = `01` waiting, `02` reels spinning. Back to `00` when done |
+| `03` | `0804F8E4` | not identified (set at `080A90DE`; poked alone it freezes the frame) |
+| `04` | `080554C0` | **the ending** (below) |
+| `05` / `06` | `0803528C` / `0803B078` | Yoshi Challenge level screen / egg total screen |
+| `07` / `08` | `08008D90` / `0800D468` | Mario Bros. Classic title / play (as reached from mode 3) |
+
+**The ending** (`1991 = 04`): `1992` indexes the table at `08349588` (23 handlers):
+
+| `1992` | Scene |
+|---|---|
+| `00` | fade (`08001EEC`, then the stage in `030019AE`) |
+| `01` | init (`0805369C`): sets **`03001162` = 1** (game beaten) and **7-2's cleared bit** (`0300115F` bit 3) |
+| `02`–`06` | Wart's room, the jar opens |
+| `07` | the parade on the balcony. Sub-step **`03001BBB`** (`[03001110] + 0x1CF`): 0 until the walker at `03001C60` passes x `0x11F`, 1, then 2 → stage 8. (A forced start from a level leaves its x wrapping at 256; poking `1BBB` = 1 moves on. Never poke 2: entry 2 of its table at `08349988` is data and the CPU jumps to `018A01CA`) |
+| `08` | **MVP stage**: each character's number over their head, the MVP's name on the stand (~15 s) |
+| `09`–`0B` | fades |
+| `0C` | Mario's dream (bed, thought bubble) |
+| `0E` / `0F` | lead-in to the cast |
+| `10` | **the cast roll** (CAST, then every character and enemy by name), then **THE END** with TOP SCORE and PRESS START; waits for Start |
+| `11` / `12` | fade out, then the title (mode 2, sub 1) |
+
+| Address | Meaning |
+|---|---|
+| `03001148`–`0300114B` | **levels cleared per character** (u8 each; Mario, Peach, Toad, Luigi = the `03001C70` order). The MVP stage's numbers; part of the 40-byte file. Checked by poking 1–4 and reading the stage: Mario 1, Luigi 4, Toad 3, Peach 2, MVP LUIGI |
 
 ## Save block (unpacked from the EEPROM when a file is loaded; bit-packed by the code at `080B6B40`)
 
@@ -183,7 +247,8 @@ Play time, deaths (lives dropping by one), levels cleared and by whom, levels sk
 
 ## Not mapped yet
 
-SMA-only object types besides the Ace Coins (`74`–`78` …), grass `9A`, the character stats card, `03001162`, the
-big-vegetable / kill counters, the ending (Wart). The game didn't lag in
+SMA-only object types besides the Ace Coins (`74`–`78` …), grass `9A`, the character stats card, the
+big-vegetable / kill counters, mode 3 sub-mode `03`, modes `05`–`0B` (handlers at `0833D5C8`+; mode 5 poked alone is a
+blank white screen). The game didn't lag in
 the stretches tested, and it never calls the BIOS vblank waits (mGBA removes its idle loop), so the lag meter
 doesn't apply; NO SLOWDOWN halves CPU instruction cycles in mGBA (`native/mgba-dual.patch`).

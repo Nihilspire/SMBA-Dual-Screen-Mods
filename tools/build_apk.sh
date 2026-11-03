@@ -13,7 +13,14 @@ sed -i "s/android:versionCode=\"[^\"]*\"/android:versionCode=\"$CODE\"/" "$ROOT/
 # native: rebuild when any glue file is newer than the library
 SO=$ROOT/out/android/libsmadual.so
 if [ ! -f "$SO" ] || [ -n "$REBUILD_NATIVE" ] || [ -n "$(find "$ROOT/native" -newer "$SO" -name '*.[ch]')" ]; then
-  rm -f "$SO"; make -C "$ROOT/native" TARGET=android MGBA="$MGBA" -j8 android
+  # make can't take paths with spaces and the sysroot can't sit on a case-insensitive Windows drive (bionic has
+  # headers differing only in case), so such checkouts build in a Linux-side tree linking back to native/ and tools/
+  # (run its tools/setup_toolchain.sh once: bash ~/.cache/sma-dual-build/tools/setup_toolchain.sh)
+  NROOT=$ROOT
+  case "$ROOT" in *' '*|/mnt/*) NROOT=$HOME/.cache/sma-dual-build; mkdir -p "$NROOT/out/android"
+    ln -sfn "$ROOT/native" "$NROOT/native"; ln -sfn "$ROOT/tools" "$NROOT/tools";; esac
+  rm -f "$SO"; make -C "$NROOT/native" ROOT="$NROOT" TARGET=android MGBA="$MGBA" -j8 android
+  [ "$NROOT" = "$ROOT" ] || { mkdir -p "$(dirname "$SO")"; cp "$NROOT/out/android/libsmadual.so" "$SO"; }
 fi
 cp "$SO" "$B/lib/arm64-v8a/"
 aapt package -f -m -J "$B/gen" -M "$ROOT/app/AndroidManifest.xml" -S "$ROOT/app/res" -A "$ROOT/app/assets" -I "$ANDROID_JAR" -F "$B/res.apk"

@@ -49,7 +49,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.zip.CRC32;
 
 public class MainActivity extends Activity {
-    static final String VERSION = "0.21";
+    static final String VERSION = "0.23";
     static final int PICK_ROM = 1;
 
     SharedPreferences prefs;
@@ -114,7 +114,7 @@ public class MainActivity extends Activity {
         gamePane.addView(game, new FrameLayout.LayoutParams(-1, -1));
         glView = new android.opengl.GLSurfaceView(this);
         glView.setEGLContextClientVersion(2);
-        glView.setEGLConfigChooser(8, 8, 8, 8, 16, 0);
+        glView.setEGLConfigChooser(Renderer3D.CONFIG);
         glView.setPreserveEGLContextOnPause(true);
         glView.setRenderer(r3d);
         glView.setRenderMode(android.opengl.GLSurfaceView.RENDERMODE_WHEN_DIRTY);
@@ -283,7 +283,7 @@ public class MainActivity extends Activity {
         game.showStats = prefs.getBoolean("stats", false);
         loadCodes();
         view3d = prefs.getBoolean("dev3d", false);
-        r3d.camPreset = prefs.getString("cam3d", "tilt");
+        r3d.camPreset = cam3d();
         r3d.scene.depth = prefs.getInt("depth3d", 16);
         r3d.scene.back = prefs.getString("back3d", "near");
         r3d.scene.cave = prefs.getBoolean("cave3d", true);
@@ -402,6 +402,23 @@ public class MainActivity extends Activity {
         (on ? border3d : game).showOsd(on ? "3D VIEW" : "2D VIEW");
     }
 
+    /** The 3D cameras, in the order the hotkey and the menu step through them. */
+    static final String[] CAMS = { "low", "tilt", "far" };
+    String cam3d() {
+        String c = prefs.getString("cam3d", "tilt");
+        for (String k : CAMS) if (k.equals(c)) return c;
+        return "tilt";                                            // 0.21's diorama / side
+    }
+
+    void cycleCamera() {
+        String c = cam3d(); int i = 0;
+        while (!CAMS[i].equals(c)) i++;
+        String n = CAMS[(i + 1) % CAMS.length];
+        prefs.edit().putString("cam3d", n).apply();
+        r3d.camPreset = n;
+        if (view3d) border3d.showOsd("CAMERA " + n.toUpperCase()); else game.showOsd("3D CAMERA " + n.toUpperCase());
+    }
+
     void changeDepth(int delta) {
         int d = Math.max(DEPTH_MIN, Math.min(DEPTH_MAX, prefs.getInt("depth3d", 16) + delta));
         prefs.edit().putInt("depth3d", d).apply();
@@ -423,7 +440,7 @@ public class MainActivity extends Activity {
         try {
             JSONObject s = new JSONObject();
             s.put("dev3d", prefs.getBoolean("dev3d", false));
-            s.put("cam3d", prefs.getString("cam3d", "tilt"));
+            s.put("cam3d", cam3d());
             s.put("depth3d", prefs.getInt("depth3d", 16));
             s.put("border3d", prefs.getBoolean("border3d", true));
             s.put("back3d", prefs.getString("back3d", "near"));
@@ -532,6 +549,10 @@ public class MainActivity extends Activity {
         }
         if (btn == 15 || btn == 16) {
             if (down) changeDepth(btn == 15 ? 4 : -4);
+            return true;
+        }
+        if (btn == 19) {
+            if (down && e.getRepeatCount() == 0) cycleCamera();
             return true;
         }
         int bit = Gba.bit(btn);
@@ -729,7 +750,7 @@ public class MainActivity extends Activity {
                 s.put("romMenu", prefs.getBoolean("romMenu", true));
                 s.put("stats", prefs.getBoolean("stats", false));
                 s.put("dev3d", prefs.getBoolean("dev3d", false));
-                s.put("cam3d", prefs.getString("cam3d", "tilt"));
+                s.put("cam3d", cam3d());
                 s.put("depth3d", prefs.getInt("depth3d", 16));
                 s.put("back3d", prefs.getString("back3d", "near"));
                 s.put("cave3d", prefs.getBoolean("cave3d", true));
@@ -1118,6 +1139,7 @@ public class MainActivity extends Activity {
             map.put(KeyEvent.KEYCODE_F5, 12); map.put(KeyEvent.KEYCODE_F7, 13);
             map.put(KeyEvent.KEYCODE_F2, 14); map.put(KeyEvent.KEYCODE_BUTTON_THUMBR, 14);
             map.put(KeyEvent.KEYCODE_PAGE_UP, 15); map.put(KeyEvent.KEYCODE_PAGE_DOWN, 16);
+            map.put(KeyEvent.KEYCODE_F3, 19);
         }
 
         void load(String json) {
@@ -1128,6 +1150,8 @@ public class MainActivity extends Activity {
                 map.clear();
                 Iterator<String> it = o.keys();
                 while (it.hasNext()) { String k = it.next(); map.put(Integer.parseInt(k), o.getInt(k)); }
+                // bindings saved before 0.22 have no 3D CAMERA key: give it F3 when that's free
+                if (map.indexOfValue(19) < 0 && map.get(KeyEvent.KEYCODE_F3, -1) < 0) map.put(KeyEvent.KEYCODE_F3, 19);
             } catch (Exception e) { defaults(); }
         }
 

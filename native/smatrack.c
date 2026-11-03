@@ -5,7 +5,7 @@
 #include "gbacore.h"
 
 #define MODE         0x030019B0u   /* 3 = SMB2 */
-#define SUB_MODE     0x03001991u   /* 1 = in a level (0 = character select / chart) */
+#define SUB_MODE     0x03001991u   /* 1 = in a level (0 = character select / chart, 2 Bonus Chance, 4 the ending) */
 #define MAIN_STATE   0x03001992u   /* in a level: 1 playing, 0x0D pause. Also 1 at character select, hence the others */
 #define CUR_LEVEL    0x03001160u   /* 0..19 = 1-1 .. 7-2 */
 #define LIVES        0x03001161u
@@ -26,6 +26,11 @@ static void cleared(int lv, int ch) {
 }
 
 void sma_track(void) {
+  /* 0.23: 7-2 has no next level to move to, so its clear is the ending starting (sub-mode 4) */
+  if (gba_peek(MODE) == 3 && gba_peek(SUB_MODE) == 4 && !(sma_t[6] & 2) && gba_peek(CUR_LEVEL) == 19) {
+    cleared(19, last_level == 19 ? last_char : gba_peek(CHARACTER) & 3);
+    sma_t[6] |= 2;                         /* saw the ending */
+  }
   if (gba_peek(MODE) != 3 || gba_peek(SUB_MODE) != 1 || gba_peek(MAIN_STATE) != 1) return;
   sma_t[0]++;
   int lv = gba_peek(CUR_LEVEL), li = gba_peek(LIVES), ch = gba_peek(CHARACTER) & 3;

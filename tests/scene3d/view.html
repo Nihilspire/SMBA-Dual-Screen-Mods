@@ -24,7 +24,7 @@ function mvp(W, H, pr, depth) {
   const halfH = Math.max(80, 120 / asp) / zoom, dist = halfH / Math.tan(fov * Math.PI / 360) + depth;
   const p = pitch * Math.PI / 180, y = yaw * Math.PI / 180, cx = 120, cy = -80;
   const e = [cx + dist * Math.sin(y) * Math.cos(p), cy + dist * Math.sin(p), dist * Math.cos(y) * Math.cos(p)];
-  return { m: mul(persp(fov, asp, 10, 5000), lookAt(e, [cx, cy, 0], [0, 1, 0])), dist };
+  return { m: mul(persp(fov, asp, 40, 2000), lookAt(e, [cx, cy, 0], [0, 1, 0])), dist };
 }
 window.show = function (b64, preset) {
   const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0)), dv = new DataView(raw.buffer);

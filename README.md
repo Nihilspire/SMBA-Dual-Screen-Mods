@@ -190,6 +190,34 @@ drawn white (or black, for darken) at alpha BLDY/16 at the end of the sprite pas
 far layer covers the top of the screen, flipped every few frames as the camera moved (5-3's cave between black, brown
 and olive rock; 5-1 between clouds and bushes) and the space round the level flashed; it now eases (8% per frame) and
 snaps only on a new area or screen.
+**0.22:** the Link map lost you in two places. Subspace is built as one more page after the area's last (x ≥ pages ×
+256) and the map read only 10 pages and clamped its view to the area, so the marker left the map; it now reads 11 pages
+and shows just the subspace page while you're in it. And 1-1 opens with the vertical flag still clear while you fall
+down a vertical area, so the map laid it out sideways; like the 3D view it now takes the layout whose level data matches
+BG0's tile map (until a picture settles it, being below the first 15 rows means vertical). The 3D cameras are down to
+three, LOW / TILT / FAR (diorama and side read as tilt), and a bindable 3D CAMERA button (F3 by default) steps through
+them. Ledges flicking back a step on phones (worst from the low camera, e.g. walking 1-1's log) was depth precision:
+a 16-bit depth buffer with the near plane at 10 resolved only ~0.12 units at the scene, coarser than the gaps between
+some faces, so they z-fought as the camera moved. The view now asks for 24 bits (16 if that's all there is) with near /
+far at 40 / 2000. Desktop SwiftShader always had the precision, so the harness never showed it.
+Clouds (metatiles 101-103: 1-1's climb, 7-1) were solid slabs: block tiles fill their clear pixels with the nearest
+opaque colour (for hill corners), which on a cloud is the dark outline, so every cloud had a thick black rim and dark
+sides. They are cut-outs now (clear texels dropped on every face) and their top / bottom / side faces take the tile's
+middle row / column, the white body, instead of streaking the outline through the depth.
+**0.23:** RAM mapping for the screens the Link page didn't know (RAM-MAP.md, "Mode 3 sub-modes and the ending"): the
+game's sub-mode `03001991` is 2 in Bonus Chance, 4 in the ending, 5 / 6 on the Yoshi Challenge screens, and the ending
+steps `03001992` through its own 23 stages (Wart's room, the parade, the MVP stage, Mario's dream, the cast roll and THE
+END). The MVP stage's numbers are levels cleared per character, kept on the file at `03001148`-`0300114B`. The Link
+page now shows a BONUS CHANCE card (spins left, lives) and, through the ending and credits, a summary card (each
+character's levels cleared with the MVP marked, then time, deaths, levels, Ace Coins, eggs) instead of the stale level
+cards. The tracker now counts 7-2 as cleared (and by whom) when the ending starts; there is no next level to move to,
+so it never did.
+More addresses (RAM-MAP.md, "In-level states, player state, cursors"), found by recording IWRAM every frame through
+a pit death, the potion door, ducking and the menus: the level's own states (life lost, GAME OVER and its menu, door,
+Subspace, TRY AGAIN), the player state `03001C6F` (7 dying, 0x0B at a door), the power-jump charge `03001C7F` (full at
+60), the character select cursor `03001E01` and the pause / game-over menu cursor `03001A63`. The Link page's status
+line now says GAME OVER, OUCH or POWER JUMP when they apply, and at character select the status card follows the
+cursor (name, colour, portrait) instead of showing the last character played.
 
 ## Build
 ```

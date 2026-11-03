@@ -12,10 +12,11 @@ final class Gba {
     // RETRO_DEVICE_ID_JOYPAD_* bits
     static final int B = 1, Y = 1 << 1, SELECT = 1 << 2, START = 1 << 3, UP = 1 << 4, DOWN = 1 << 5,
             LEFT = 1 << 6, RIGHT = 1 << 7, A = 1 << 8, X = 1 << 9, L = 1 << 10, R = 1 << 11;
-    /** Bindable buttons; 8..16 are app functions (turbo, menu, fast, quick save/load, 3D), 17/18 the shoulders. */
+    /** Bindable buttons; 8..16 are app functions (turbo, menu, fast, quick save/load, 3D), 17/18 the shoulders,
+     *  19 the 3D camera (added last so saved bindings keep their numbers). */
     static final String[] BUTTON_NAMES = { "UP", "DOWN", "LEFT", "RIGHT", "B", "A", "SELECT", "START", "TURBO B", "TURBO A",
-            "MENU", "FAST", "SAVE", "LOAD", "3D VIEW", "3D DEPTH +", "3D DEPTH -", "L", "R" };
-    static final int[] BUTTON_BITS = { UP, DOWN, LEFT, RIGHT, B, A, SELECT, START, 0, 0, 0, 0, 0, 0, 0, 0, 0, L, R };
+            "MENU", "FAST", "SAVE", "LOAD", "3D VIEW", "3D DEPTH +", "3D DEPTH -", "L", "R", "3D CAMERA" };
+    static final int[] BUTTON_BITS = { UP, DOWN, LEFT, RIGHT, B, A, SELECT, START, 0, 0, 0, 0, 0, 0, 0, 0, 0, L, R, 0 };
     static int bit(int btn) { return btn >= 0 && btn < BUTTON_BITS.length ? BUTTON_BITS[btn] : 0; }
     static int special(int btn) { return btn >= 8 && btn <= 16 ? 1 << (btn - 8) : 0; }
 

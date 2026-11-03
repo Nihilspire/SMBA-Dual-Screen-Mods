@@ -121,13 +121,15 @@
       var lv = S.level(ram), h = S.health(ram), pk = S.px(ram) + ',' + S.py(ram) + ',' + S.character(ram);
       still = pk === lastPos ? still + 1 : 0; lastPos = pk;
       maxHearts = S.maxHearts(ram);
-      if (tickN - lastLvl >= 5) { lastLvl = tickN; var lh = Native.mem('2000000:4800'); if (lh.length === 9600) lvl = S.hexBytes(lh); }
-      if (tickN - lastVid >= 10 && S.playing(ram)) {
+      // 11 pages: the area's 10 at most, then subspace's
+      if (tickN - lastLvl >= 5) { lastLvl = tickN; var lh = Native.mem('2000000:5280'); if (lh.length === 10560) lvl = S.hexBytes(lh); }
+      if (tickN - lastVid >= 10 && (S.playing(ram) || S.subspace(ram))) {
         lastVid = tickN;
         var v = Native.video ? Native.video() : '';
         if (v) { var nv = G.b64(v); if (nv.length >= 0x18860) video = nv; }
         grabPortrait(); grabLive();
       }
+      updateGeo();
     }
     if (ram && tickN - lastTrk >= 5 && Native.tracker) {
       lastTrk = tickN;
@@ -201,7 +203,11 @@
   // screen), so the status picture kept changing.
   var portraits = {};
   function portraitKey() { return S.character(ram) + (S.health(ram) <= 1 ? 's' : 'b'); }
-  function portraitFor() { return ram ? portraits[portraitKey()] || null : null; }
+  function portraitFor() {
+    if (!ram) return null;
+    if (S.charSelect(ram)) return portraits[S.cursorChar(ram) + 'b'] || null;
+    return portraits[portraitKey()] || null;
+  }
   (function loadPortraits() {
     if (window.STANDIN) return;
     for (var ch = 0; ch < 4; ch++) ['b', 's'].forEach(function (z) {
@@ -253,20 +259,67 @@
   }
 
   // ------------------------------------------------------------------ area map (the decoded level in the game's tiles)
-  function cellId(c, r) {
-    if (!lvl) return -1;
-    var idx, pages = S.pages(ram);
-    if (S.vertical(ram)) { if (c < 0 || c > 15 || r < 0 || r >= pages * 15) return -1; idx = r * 16 + c; }
-    else { if (c < 0 || r < 0 || r > 14 || c >= pages * 16) return -1; idx = (c >> 4) * 240 + r * 16 + (c & 15); }
-    return lvl[idx * 2] | lvl[idx * 2 + 1] << 8;
+  // Which way the area runs and where it sits in the level buffer (0.22). The game's vertical flag (0300116F) is set
+  // late after entering an area (1-1 opens with it clear while you fall down a vertical area), so, as in the 3D view,
+  // the layout is the one whose level data matches BG0's tile map; until a picture settles it, a player below the first
+  // 15 rows means vertical and one right of the first screen means horizontal. Subspace is one more page after the
+  // area's last (the player is at x >= pages * 256 there), so the map shows just that page.
+  var geo = { vert: false, pages: 1, page0: 0 }, layoutMemo = { key: '', vid: null, vert: null };
+  function updateGeo() {
+    var pages = S.pages(ram), px = S.px(ram), py = S.py(ram), flag = S.vertical(ram);
+    if (px >> 8 >= pages && px >> 8 <= 10) { geo = { vert: false, pages: 1, page0: px >> 8 }; return; }
+    var key = S.level(ram) + '/' + S.area(ram) + '/' + pages;
+    if (layoutMemo.key !== key) layoutMemo = { key: key, vid: null, vert: null };
+    if (video && lvl && meta && layoutMemo.vid !== video && S.playing(ram)) {
+      layoutMemo.vid = video;
+      var m = matchLayout(pages); if (m != null) layoutMemo.vert = m;
+    }
+    var vert = layoutMemo.vert != null ? layoutMemo.vert : px >= 256 ? false : py >= 256 ? true : flag;
+    geo = { vert: vert, pages: pages, page0: 0 };
   }
-  function areaSize() { var p = S.pages(ram); return S.vertical(ram) ? [16, p * 15] : [p * 16, 15]; }
+  /** true / false when one layout clearly matches BG0 (90% of sampled cells, and better than the other), else null. */
+  function matchLayout(pages) {
+    var cnt = vu16(V_IO + 8), w = cnt & 0x4000 ? 512 : 256, h = cnt & 0x8000 ? 512 : 256;
+    var hx = vu16(V_IO + 0x10) & 511, vy = vu16(V_IO + 0x12) & 511, qm = S.quadMode(ram), best = [0, 0];
+    for (var v = 0; v < 2; v++) {
+      var maxX = v ? 256 : pages * 256, maxY = v ? pages * 240 : 240;
+      for (var cx = hx % w - w; cx < maxX; cx += w) for (var cy = vy % h - h; cy < maxY; cy += h) {
+        if (cx + 240 <= 0 || cy + 160 <= 0) continue;
+        var ok = 0, n = 0;
+        for (var sy = 12; sy < 160; sy += 20) for (var sx = 4; sx < 240; sx += 18) {
+          var wx = cx + sx, wy = cy + sy, t = cellAt(!!v, pages, 0, wx >> 4, wy >> 4), q = t < 0 ? null : S.retile(t, qm, quad(t));
+          if (!q) continue;
+          n++;
+          if ((bgEntry(cnt, w, h, hx + sx, vy + sy) & 0x3FF) === (q[((wy >> 3) & 1) * 2 + ((wx >> 3) & 1)] & 0x3FF)) ok++;
+        }
+        if (n >= 20) best[v] = Math.max(best[v], ok / n);
+      }
+    }
+    var b = best[1] > best[0] ? 1 : 0;
+    return best[b] >= 0.9 && best[b] - best[1 - b] > 0.02 ? b === 1 : null;
+  }
+  /** A text BG's map entry at a scrolled pixel (cnt = its BGxCNT). */
+  function bgEntry(cnt, w, h, x, y) {
+    var wx = x % w, wy = y % h, tx = wx >> 3, ty = wy >> 3, blk = (cnt >> 8) & 31;
+    if (tx >= 32) { blk += 1; tx -= 32; }
+    if (ty >= 32) { blk += w === 512 ? 2 : 1; ty -= 32; }
+    return vu16(blk * 0x800 + (ty * 32 + tx) * 2);
+  }
+  function cellAt(vert, pages, page0, c, r) {
+    if (!lvl || c < 0 || r < 0) return -1;
+    var idx;
+    if (vert) { if (c > 15 || r >= pages * 15) return -1; idx = r * 16 + c; }
+    else { if (r > 14 || c >= pages * 16) return -1; idx = (page0 + (c >> 4)) * 240 + r * 16 + (c & 15); }
+    return idx * 2 + 1 < lvl.length ? lvl[idx * 2] | lvl[idx * 2 + 1] << 8 : -1;
+  }
+  function cellId(c, r) { return cellAt(geo.vert, geo.pages, geo.page0, c, r); }
+  function areaSize() { return geo.vert ? [16, geo.pages * 15] : [geo.pages * 16, 15]; }
   function buildArea() {
     if (!lvl || !video || !meta) return;
     var sz = areaSize(), sum = 0;
     for (var i = 0; i < sz[0] * sz[1] * 2 && i < lvl.length; i += 3) sum = (sum * 31 + lvl[i]) | 0;
     var qm = S.quadMode(ram);
-    var key = S.level(ram) + '/' + S.area(ram) + '/' + sz + '/' + sum + '/' + lastVidKey() + '/' + qm;
+    var key = S.level(ram) + '/' + S.area(ram) + '/' + sz + '/' + geo.page0 + '/' + sum + '/' + lastVidKey() + '/' + qm;
     if (key === areaKey && areaCv) return;
     areaKey = key;
     var w = sz[0] * 16, h = sz[1] * 16;
@@ -311,6 +364,8 @@
     buttons = []; mapBox = null; optPane = null;
     if (!ram || !romOk) { idle(); return; }
     if (S.gameMode(ram) === 4) { marioBros(); drawTabs(); return; }
+    if (S.ending(ram)) { ending(); drawTabs(); return; }
+    if (S.bonusChance(ram)) { bonusChance(); drawTabs(); return; }
     if (!S.inLevel(ram) && !trk) { idle('TITLE SCREEN', 'PICK A FILE AND PLAY'); return; }
     if (!layout.small || tab === 'status') { blockA(layout.a.x, layout.a.y); blockB(layout.b.x, layout.b.y); }
     if (tab !== 'status') {
@@ -409,7 +464,7 @@
   function blockA(x, y) {
     card(x, y, 116, A_H);
     var lv = S.level(ram), name = lv <= 19 ? S.LEVELS[lv] : '-';
-    var ch = S.character(ram), band = soft(S.CHAR_COL[ch], 0.3);
+    var ch = S.charSelect(ram) ? S.cursorChar(ram) : S.character(ram), band = soft(S.CHAR_COL[ch], 0.3);   // 0.23: follows the select cursor
     rrect(x + 1, y + 1, 114, 11, band);
     G.text(ctx, 'WORLD', x + 4, y + 3, '#4a2c12'); G.text(ctx, name, x + 46, y + 3, '#a82a1a');
     var where = S.subspace(ram) ? 'SUB' : 'A' + (S.areaNo(ram) + 1);
@@ -453,7 +508,11 @@
       if (!icon(a[3], tx, y + 2)) G.text(ctx, a[0][0], tx + 4, y + 6, a[4]);
       bar(tx + 18, y + 6, 36, a[1] / 255, a[2]);
     });
-    else G.text(ctx, S.holding(ram) ? 'CARRYING' : 'READY', x + 4, y + 6, T.muted);
+    else {                                                                   // 0.23: the player's state when no timer runs
+      var what = S.gameOver(ram) ? ['GAME OVER', T.red] : S.dying(ram) ? ['OUCH', T.red] : S.charge(ram) >= 60 ? ['POWER JUMP', T.gold]
+        : S.holding(ram) ? ['CARRYING', T.muted] : ['READY', T.muted];
+      G.text(ctx, what[0], x + 4, y + 6, what[1]);
+    }
     var yy = y + 22, secs = trk ? trk.time / 59.7275 : 0;
     G.text(ctx, 'TIME', x + 4, yy, T.blue); G.textR(ctx, hms(secs), x + 113, yy, C.dbrown);
     G.text(ctx, 'DEATHS', x + 4, yy + 10, T.red); G.textR(ctx, String(trk ? trk.deaths : 0), x + 113, yy + 10, C.dbrown);
@@ -589,8 +648,8 @@
     if (!areaCv || !S.inLevel(ram)) { G.textC(ctx, 'NO MAP HERE', inner.x + inner.w / 2, inner.y + inner.h / 2 - 4, T.muted); return; }
     ctx.save(); ctx.beginPath(); ctx.rect(inner.x, inner.y, inner.w, inner.h); ctx.clip();
     var sk = skyRgb(); ctx.fillStyle = 'rgb(' + sk.join(',') + ')'; ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
-    var aw = areaCv.width, ah = areaCv.height, vert = S.vertical(ram), bar = null;
-    var px = S.px(ram) + 8, py = S.py(ram) + 16;
+    var aw = areaCv.width, ah = areaCv.height, vert = geo.vert, bar = null;
+    var px = S.px(ram) - geo.page0 * 256 + 8, py = S.py(ram) + 16;
     // Zoom levels (0.14): FIT = the area's whole height (whole width for vertical areas) fills the pane; WIDE shows 1.5x
     // more; NEAR is halfway to 1:1. Scales snap to whole pixels per 16 px cell; below 1 the map is an area-averaged copy.
     var fit = Math.min(1, vert ? inner.w / aw : inner.h / ah);
@@ -599,7 +658,7 @@
     var sc = Math.max(2, Math.floor(L[opts.zl] * 16)) / 16, fitSc = Math.max(2, Math.floor(fit * 16)) / 16;
     zoomName = sc === 1 ? '1:1' : sc === fitSc ? 'FIT' : Math.round(sc * 100) + '%';
     var spanX = inner.w / sc, spanY = inner.h / sc;
-    var key = S.level(ram) + '/' + S.area(ram) + '/' + vert + '/' + opts.zl;
+    var key = S.level(ram) + '/' + S.area(ram) + '/' + vert + '/' + geo.page0 + '/' + opts.zl;
     if (view.key !== key || view.x == null) { view.key = key; view.x = px - spanX / 2; view.y = py - spanY / 2; }
     view.x = follow(view.x, px, spanX, aw); view.y = follow(view.y, py, spanY, ah);
     // after a drag the view stays where you put it for ~4 s, then eases back to following you
@@ -807,6 +866,42 @@
     G.text(ctx, 'ENEMIES LEFT', cx - 80, y + 44, C.brown); G.textR(ctx, String(m.left), cx + 80, y + 44, C.dbrown);
     G.text(ctx, 'SCORE', cx - 80, y + 56, C.brown); G.textR(ctx, pad(m.score, 6), cx + 80, y + 56, C.dbrown);
     G.text(ctx, 'LIVES', cx - 80, y + 68, C.brown); G.textR(ctx, String(m.lives), cx + 80, y + 68, C.dbrown);
+  }
+
+  // ------------------------------------------------------------------ Bonus Chance and the ending (0.23)
+  function bonusChance() {
+    var cx = W / 2, y = Math.max(8, H / 2 - 50), spins = S.coins(ram);
+    card(cx - 100, y, 200, 80);
+    G.textC(ctx, 'BONUS CHANCE', cx, y + 6, T.red, 2);
+    G.text(ctx, 'SPINS LEFT', cx - 80, y + 32, C.brown); G.textR(ctx, String(spins), cx + 80, y + 32, C.dbrown);
+    G.text(ctx, 'LIVES', cx - 80, y + 44, C.brown); G.textR(ctx, String(S.lives(ram)), cx + 80, y + 44, C.dbrown);
+    var msg = S.mainState(ram) === 2 ? 'SPINNING' : spins ? 'PRESS A TO SPIN' : 'NO SPINS LEFT';
+    G.textC(ctx, msg, cx, y + 62, T.muted);
+  }
+  // The ending: a banner over Wart's room and the parade, then from the MVP stage on the run's summary: each
+  // character's levels cleared (the game's own MVP numbers, 03001148+) with the MVP marked, then the tracker's
+  // time and deaths and the file's levels, Ace Coins and eggs.
+  function ending() {
+    var st = S.endStage(ram), cx = W / 2, w = Math.min(W - 8, 220), x = Math.round(cx - w / 2);
+    var eggs = S.eggTotal(ram), h = 140 + (eggs ? 10 : 0), y = Math.max(4, Math.floor((H - 24 - h) / 2));
+    card(x, y, w, h);
+    var t = st < 7 ? 'WART IS BEATEN' : st < 8 ? 'SUBCON IS FREE' : st < 0x10 ? 'CONGRATULATIONS' : 'THE END';
+    if (t.length * 16 <= w - 8) G.textC(ctx, t, cx, y + 6, T.red, 2); else G.textC(ctx, t, cx, y + 10, T.red);
+    var n = [0, 1, 2, 3].map(function (c) { return S.charClears(ram, c); }), top = Math.max.apply(null, n), yy = y + 30;
+    ribbon('LEVELS CLEARED', x + 6, yy, C.red); yy += 14;
+    [0, 3, 2, 1].forEach(function (c) {                               // the MVP stage's order: Mario, Luigi, Toad, Peach
+      rrect(x + 6, yy, 8, 8, S.CHAR_COL[c]);
+      G.text(ctx, S.CHARS[c], x + 18, yy, CHAR_TEXT[c]);
+      bar(x + 70, yy, w - 120, top ? n[c] / top : 0, soft(S.CHAR_COL[c], 0.8));
+      G.textR(ctx, String(n[c]), x + w - 30, yy, C.dbrown);
+      if (top && n[c] === top) G.textR(ctx, 'MVP', x + w - 4, yy, T.gold);
+      yy += 12;
+    });
+    yy += 4;
+    var rows = [['TIME', hms(trk ? trk.time / 59.7275 : 0), T.blue], ['DEATHS', String(trk ? trk.deaths : 0), T.red],
+                ['LEVELS', S.clearedCount(ram) + '/20', C.dgreen], ['ACE COINS', S.aceTotal(ram) + '%', T.red]];
+    if (eggs) rows.push(['EGGS', eggs + '/40', C.dgreen]);
+    rows.forEach(function (r) { G.text(ctx, r[0], x + 6, yy, r[2]); G.textR(ctx, r[1], x + w - 6, yy, C.dbrown); yy += 10; });
   }
 
   // ------------------------------------------------------------------ options tab

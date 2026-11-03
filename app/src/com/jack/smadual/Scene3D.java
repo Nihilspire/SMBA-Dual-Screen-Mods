@@ -105,6 +105,10 @@ final class Scene3D {
     private static boolean hillR(int t) { return t == 0x062 || t == 0x11C || t == 0x121 || t == 0x124 || t == 0x126; }
     private static boolean hillCap(int t) { return t >= 0x11B && t <= 0x126; }
     private static boolean hill(int t) { return t == 0x060 || t == 0x061 || t == 0x062 || t == 0x031 || t == 0x033 || hillCap(t); }
+    // 0.22: cloud platforms (101 left, 102 middle, 103 right; 1-1's climb and 7-1) are cut-outs. As solid blocks their
+    // clear scallops took the nearest opaque colour (the dark outline), so each cloud was a slab with a thick black rim
+    // and dark sides; now their faces drop the clear texels like the mid-depth props.
+    private static boolean cloud(int t) { return t >= 0x101 && t <= 0x103; }
     private int hx0, hy0, hw, hh;
     private int[] hillNest = new int[0], par = new int[0];
     private int find(int a) { while (par[a] != a) { par[a] = par[par[a]]; a = par[a]; } return a; }
@@ -411,7 +415,7 @@ final class Scene3D {
         int tx0 = fdiv(b.hofs, 8) - M, ty0 = fdiv(b.vofs, 8) - M;
         int cols = fdiv(b.hofs + W - 1, 8) + M - tx0 + 1, rows = fdiv(b.vofs + H - 1, 8) + M - ty0 + 1;
         int[][] cls = new int[rows + 2][cols + 2], ent = new int[rows + 2][cols + 2], nst = new int[rows + 2][cols + 2];
-        boolean[][] hil = new boolean[rows + 2][cols + 2];
+        boolean[][] hil = new boolean[rows + 2][cols + 2], cut = new boolean[rows + 2][cols + 2];
         int[][][] pyr = new int[rows + 2][cols + 2][];
         pyrMemo.clear();
         if (mapped) hills(f);
@@ -440,6 +444,7 @@ final class Scene3D {
             nst[r + 1][c + 1] = mapped ? nestAt(camX + sx + 4, camY + sy + 4) : 0;
             int mt = mapped ? meta(f, camX + sx + 4, camY + sy + 4) : -1;
             hil[r + 1][c + 1] = mt >= 0 && hill(mt);
+            cut[r + 1][c + 1] = cloud(mt);
         }
         // Bodies under a ledge (hills, houses, trunks under their caps): SMA's hill tops are stand-on-top metatiles
         // (blocks) but the bodies are plain opaque scenery (back wall), so the cap stuck out as a separate slab over a
@@ -479,7 +484,8 @@ final class Scene3D {
             int k = cls[r + 1][c + 1];
             if (k == SKY) continue;
             int e = ent[r + 1][c + 1];
-            uvSlot(slot(f, false, b.cb, e & 0x3FF, e >> 12, k == BLOCK));
+            boolean cl = cut[r + 1][c + 1];
+            uvSlot(slot(f, false, b.cb, e & 0x3FF, e >> 12, k == BLOCK && !cl));
             float ua = (e & 0x400) != 0 ? u1 : u0, ub = (e & 0x400) != 0 ? u0 : u1, va = (e & 0x800) != 0 ? v1 : v0, vb = (e & 0x800) != 0 ? v0 : v1;
             float x0 = (tx0 + c) * 8 - b.hofs, x1 = x0 + 8, y0 = -((ty0 + r) * 8 - b.vofs), y1 = y0 - 8;
             if (k == BACK) {
@@ -501,12 +507,16 @@ final class Scene3D {
             }
             // front hills come forward (thicker toward the camera); a face is drawn where the neighbour isn't a block or
             // sits further back
-            float zt = blockFront(cls, nst, hil, r + 1, c + 1, zf, D);
-            quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, 0);
-            if (blockFront(cls, nst, hil, r, c + 1, zf, D) < zt) quad(x0, y0, zt, x1, y0, zt, x1, y0, zb, x0, y0, zb, ua, va, ub, va, ub, vb, ua, vb, 0.86f, 0);
-            if (blockFront(cls, nst, hil, r + 2, c + 1, zf, D) < zt) quad(x0, y1, zb, x1, y1, zb, x1, y1, zt, x0, y1, zt, ua, vb, ub, vb, ub, va, ua, va, 0.45f, 0);
-            if (blockFront(cls, nst, hil, r + 1, c, zf, D) < zt) quad(x0, y1, zb, x0, y1, zt, x0, y0, zt, x0, y0, zb, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
-            if (blockFront(cls, nst, hil, r + 1, c + 2, zf, D) < zt) quad(x1, y1, zt, x1, y1, zb, x1, y0, zb, x1, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
+            float zt = blockFront(cls, nst, hil, r + 1, c + 1, zf, D), fk = cl ? 2 : 0;
+            quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, fk);
+            // a cloud's top / bottom take its middle row and its sides its middle column (the white body, cut where the
+            // cloud is clear) instead of the whole tile squeezed through the depth, which streaked the outline across
+            float ta = va, tb = vb, sa = ua, sb = ub;
+            if (cl) { ta = tb = (va + vb) / 2; sa = sb = (ua + ub) / 2; }
+            if (blockFront(cls, nst, hil, r, c + 1, zf, D) < zt) quad(x0, y0, zt, x1, y0, zt, x1, y0, zb, x0, y0, zb, ua, ta, ub, ta, ub, tb, ua, tb, 0.86f, fk);
+            if (blockFront(cls, nst, hil, r + 2, c + 1, zf, D) < zt) quad(x0, y1, zb, x1, y1, zb, x1, y1, zt, x0, y1, zt, ua, tb, ub, tb, ub, ta, ua, ta, 0.45f, fk);
+            if (blockFront(cls, nst, hil, r + 1, c, zf, D) < zt) quad(x0, y1, zb, x0, y1, zt, x0, y0, zt, x0, y0, zb, sa, vb, sb, vb, sb, va, sa, va, 0.66f, fk);
+            if (blockFront(cls, nst, hil, r + 1, c + 2, zf, D) < zt) quad(x1, y1, zt, x1, y1, zb, x1, y0, zb, x1, y0, zt, sa, vb, sb, vb, sb, va, sa, va, 0.66f, fk);
         }
         // BG3 is the HUD (drawn flat on top) only while it is the frontmost layer, as in the levels (priority 0). On the
         // character select it is priority 3: the purple backdrop and the stage, which as a HUD covered the characters
