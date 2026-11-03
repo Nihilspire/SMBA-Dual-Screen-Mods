@@ -49,7 +49,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.zip.CRC32;
 
 public class MainActivity extends Activity {
-    static final String VERSION = "0.19";
+    static final String VERSION = "0.20";
     static final int PICK_ROM = 1;
 
     SharedPreferences prefs;
@@ -289,6 +289,7 @@ public class MainActivity extends Activity {
         r3d.scene.cave = prefs.getBoolean("cave3d", true);
         r3d.scene.rom = gfx.rom;
         r3d.scene.light = prefs.getBoolean("light3d", false);
+        r3d.scene.thick = prefs.getBoolean("thick3d", true);
         glView.setVisibility(view3d ? View.VISIBLE : View.GONE);
         game.setVisibility(view3d ? View.INVISIBLE : View.VISIBLE);
         border3d.setVisibility(view3d ? View.VISIBLE : View.GONE);
@@ -428,6 +429,7 @@ public class MainActivity extends Activity {
             s.put("back3d", prefs.getString("back3d", "near"));
             s.put("cave3d", prefs.getBoolean("cave3d", true));
             s.put("light3d", prefs.getBoolean("light3d", false));
+            s.put("thick3d", prefs.getBoolean("thick3d", true));
             return s.toString();
         } catch (Exception e) { return "{}"; }
     }
@@ -732,6 +734,7 @@ public class MainActivity extends Activity {
                 s.put("back3d", prefs.getString("back3d", "near"));
                 s.put("cave3d", prefs.getBoolean("cave3d", true));
                 s.put("light3d", prefs.getBoolean("light3d", false));
+                s.put("thick3d", prefs.getBoolean("thick3d", true));
                 s.put("border3d", prefs.getBoolean("border3d", true));
                 s.put("devUnlock", prefs.getBoolean("devUnlock", false));
                 s.put("codeHealth", prefs.getBoolean("codeHealth", false));

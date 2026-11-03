@@ -69,7 +69,9 @@ window.show = function (b64, preset) {
   gl.uniformMatrix4fv(U('uMvp'), false, cam.m); gl.uniform1i(U('uMode'), 0);
   gl.drawArrays(gl.TRIANGLES, 0, caveStart);
   if (caveCount > 0) { gl.uniform1i(U('uMode'), 1); gl.drawArrays(gl.TRIANGLES, caveStart, caveCount); }
-  if (hudStart > spriteStart) { gl.uniform1i(U('uMode'), 0); gl.disable(gl.DEPTH_TEST); gl.drawArrays(gl.TRIANGLES, spriteStart, hudStart - spriteStart); gl.enable(gl.DEPTH_TEST); }
+  if (hudStart > spriteStart) {        // as Renderer3D: own depth pass, LEQUAL, no culling
+    gl.uniform1i(U('uMode'), 0); gl.clear(gl.DEPTH_BUFFER_BIT); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE);
+    gl.drawArrays(gl.TRIANGLES, spriteStart, hudStart - spriteStart); gl.depthFunc(gl.LESS); }
   {                                    // HUD layer (BG3), flat over the 3:2 picture
     const asp = 1.5; let rw = W, rh = W / asp; if (rh > H) { rh = H; rw = H * asp; }
     const rx = (W - rw) / 2, ry = (H - rh) / 2, m = new Float32Array(16);

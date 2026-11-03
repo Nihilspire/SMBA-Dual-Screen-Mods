@@ -34,7 +34,7 @@ final class Scene3D {
     // options
     volatile String back = "near";
     volatile int depth = 16;
-    volatile boolean cave = true, light = false;
+    volatile boolean cave = true, light = false, thick = true;
     volatile byte[] rom;
 
     // outputs (read by the renderer after build())
@@ -367,6 +367,16 @@ final class Scene3D {
         push(ax, ay, az, ua, va, shade, kind); push(bx, by, bz, ub, vb, shade, kind); push(cx, cy, cz, uc, vc, shade, kind);
         push(ax, ay, az, ua, va, shade, kind); push(cx, cy, cz, uc, vc, shade, kind); push(dx, dy, dz, ud, vd, shade, kind);
     }
+    // 0.20: ground and other solid blocks stand out GROUND_LIP of the block depth in front of the hill scenery at the
+    // same nest. Flush with the cliff behind them (0.6-0.19), the grass under a sprite was the cliff's own front plane,
+    // so characters looked pasted on the wall; now they stand on a strip of ground in front of it. Less than HILL_STEP,
+    // so a hill that steps forward still covers the ground behind it.
+    static final float GROUND_LIP = 0.375f;
+    /** Front z of the block in cell (r, c) of the build grid; -inf when the cell isn't a block. */
+    private static float blockFront(int[][] cls, int[][] nst, boolean[][] hil, int r, int c, float zf, int D) {
+        if (cls[r][c] != BLOCK) return Float.NEGATIVE_INFINITY;
+        return zf + nst[r][c] * D * HILL_STEP + (hil[r][c] ? 0 : GROUND_LIP * D);
+    }
     private static int fdiv(int a, int b) { int r = a / b; if ((a % b != 0) && ((a < 0) != (b < 0))) r--; return r; }
 
     /** camDist: distance from the camera to the z = 0 plane (for the backdrop scale). */
@@ -451,6 +461,20 @@ final class Scene3D {
                 else if (carry > nst[r][c]) nst[r][c] = carry;
             }
         }
+        // 0.20: a bridge comes forward with its banks. A run of non-hill blocks (1-1's logs over the waterfalls) between
+        // two blocks that sit further forward (the ground under forward hills, pulled forward above) takes the nearer
+        // of the two. It stayed at the back, so the log sank into a notch between the banks and, from the low camera,
+        // its end ran into the hill's face.
+        if (mapped) for (int r = 0; r < rows + 2; r++) for (int c = 1; c < cols + 1; ) {
+            if (cls[r][c] != BLOCK || hil[r][c] || cls[r][c - 1] != BLOCK) { c++; continue; }
+            int n = nst[r][c], e = c;
+            while (e + 1 < cols + 2 && cls[r][e + 1] == BLOCK && !hil[r][e + 1] && nst[r][e + 1] == n) e++;
+            if (e + 1 < cols + 2 && cls[r][e + 1] == BLOCK) {
+                int m = Math.min(nst[r][c - 1], nst[r][e + 1]);
+                if (m > n) for (int k = c; k <= e; k++) nst[r][k] = m;
+            }
+            c = e + 1;
+        }
         for (int r = 0; r < rows; r++) for (int c = 0; c < cols; c++) {
             int k = cls[r + 1][c + 1];
             if (k == SKY) continue;
@@ -477,13 +501,12 @@ final class Scene3D {
             }
             // front hills come forward (thicker toward the camera); a face is drawn where the neighbour isn't a block or
             // sits further back
-            int nn = nst[r + 1][c + 1];
-            float zt = zf + nn * D * HILL_STEP;
+            float zt = blockFront(cls, nst, hil, r + 1, c + 1, zf, D);
             quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, 0);
-            if (cls[r][c + 1] != BLOCK || nst[r][c + 1] < nn) quad(x0, y0, zt, x1, y0, zt, x1, y0, zb, x0, y0, zb, ua, va, ub, va, ub, vb, ua, vb, 0.86f, 0);
-            if (cls[r + 2][c + 1] != BLOCK || nst[r + 2][c + 1] < nn) quad(x0, y1, zb, x1, y1, zb, x1, y1, zt, x0, y1, zt, ua, vb, ub, vb, ub, va, ua, va, 0.45f, 0);
-            if (cls[r + 1][c] != BLOCK || nst[r + 1][c] < nn) quad(x0, y1, zb, x0, y1, zt, x0, y0, zt, x0, y0, zb, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
-            if (cls[r + 1][c + 2] != BLOCK || nst[r + 1][c + 2] < nn) quad(x1, y1, zt, x1, y1, zb, x1, y0, zb, x1, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
+            if (blockFront(cls, nst, hil, r, c + 1, zf, D) < zt) quad(x0, y0, zt, x1, y0, zt, x1, y0, zb, x0, y0, zb, ua, va, ub, va, ub, vb, ua, vb, 0.86f, 0);
+            if (blockFront(cls, nst, hil, r + 2, c + 1, zf, D) < zt) quad(x0, y1, zb, x1, y1, zb, x1, y1, zt, x0, y1, zt, ua, vb, ub, vb, ub, va, ua, va, 0.45f, 0);
+            if (blockFront(cls, nst, hil, r + 1, c, zf, D) < zt) quad(x0, y1, zb, x0, y1, zt, x0, y0, zt, x0, y0, zb, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
+            if (blockFront(cls, nst, hil, r + 1, c + 2, zf, D) < zt) quad(x1, y1, zt, x1, y1, zb, x1, y0, zb, x1, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
         }
         // backdrop: the game's own far layers (BG2 under BG1) around the screen, on a far plane
         caveStart = nv; caveCount = 0;
@@ -543,6 +566,7 @@ final class Scene3D {
         // sprites (OBJ): cut-outs in the middle of the depth, back to front (OAM 127 first), no depth test
         boolean map1d = (u16(f, IO) & 0x40) != 0;
         oamBoxes(f);
+        spriteDepths(f);
         platforms(f);
         boolean drawn = false;
         for (int s = 127; s >= 0; s--) {
@@ -619,8 +643,50 @@ final class Scene3D {
         }
         for (int s = 0; s < 128; s++) if (box[s] != null) {
             int r = root(grp, s); feetX[s] = (x0[r] + x1[r]) / 2; feetY[s] = y1[r];
-            gx0[s] = x0[r]; gy0[s] = y0[r]; gx1[s] = x1[r];
+            gx0[s] = x0[r]; gy0[s] = y0[r]; gx1[s] = x1[r]; gRoot[s] = r;
         }
+    }
+
+    // 0.20: sprite depth eases instead of jumping. The nest a group stands at (its feet, or every hill its box overlaps,
+    // 0.15) changes in whole steps of 0.75 of the block depth, so an enemy walking past the edge of a hill in front of
+    // another hill snapped forward / back by 12 units in one frame, which the perspective shows as a jump on screen. Each
+    // group is matched to last frame's group with the nearest feet (world pixels, within 24) and moves a fifth of the way
+    // to its target per frame; a new group starts at its target.
+    private final float[] gNest = new float[128];
+    private final int[] gRoot = new int[128];
+    private float[] prevFx = new float[0], prevFy = new float[0], prevNest = new float[0];
+    private int prevKey = -1;
+    private void spriteDepths(byte[] f) {
+        Arrays.fill(gNest, 0);
+        if (!mapped) { prevFx = new float[0]; return; }
+        int bgPrio = bg[0].cnt & 3;
+        float[] tgt = new float[128]; boolean[] has = new boolean[128];
+        for (int s = 0; s < 128; s++) if (box[s] != null) {
+            int r = gRoot[s];
+            int n = nestAt(camX + feetX[s], camY + feetY[s] + 4);
+            int prio = (u16(f, OAM + s * 8 + 4) >> 10) & 3;
+            if (prio <= bgPrio)   // drawn over BG0: in front of every hill it overlaps (0.15)
+                for (int sy = gy0[s] + 4; sy < feetY[s] - 2; sy += 8) for (int sx = gx0[s] + 4; sx < gx1[s] - 2; sx += 8)
+                    n = Math.max(n, nestAt(camX + sx, camY + sy));
+            if (!has[r] || n > tgt[r]) tgt[r] = n;
+            has[r] = true;
+        }
+        int key = var(f, Gba.CURRENT_LEVEL) * 16 + var(f, Gba.AREA_NO);
+        boolean same = key == prevKey; prevKey = key;
+        int cnt = 0; for (int r = 0; r < 128; r++) if (has[r]) cnt++;
+        float[] fx = new float[cnt], fy = new float[cnt], nz = new float[cnt];
+        int k = 0;
+        for (int r = 0; r < 128; r++) if (has[r]) {
+            float wx = camX + feetX[r], wy = camY + feetY[r], z = tgt[r];
+            int best = -1; float bd = 24 * 24;
+            if (same) for (int i = 0; i < prevFx.length; i++) {
+                float dx = prevFx[i] - wx, dy = prevFy[i] - wy, d = dx * dx + dy * dy;
+                if (d < bd) { bd = d; best = i; }
+            }
+            if (best >= 0) { z = prevNest[best] + (tgt[r] - prevNest[best]) * 0.2f; if (Math.abs(z - tgt[r]) < 0.01f) z = tgt[r]; }
+            gNest[r] = z; fx[k] = wx; fy[k] = wy; nz[k++] = z;
+        }
+        prevFx = fx; prevFy = fy; prevNest = nz;
     }
     private static int root(int[] g, int i) { while (g[i] != i) i = g[i] = g[g[i]]; return i; }
     private void platforms(byte[] f) {
@@ -681,21 +747,22 @@ final class Scene3D {
             boxH = dbl ? 2 * h : h;
         }
         float zs = depth / 2f + 0.05f + zOff;
-        if (mapped) {
-            int fx = camX + (box[s] != null ? feetX[s] : Math.round(ccx)), fy = camY + (box[s] != null ? feetY[s] : Math.round(ccy + boxH / 2f)) + 4;
-            int nest = nestAt(fx, fy);
-            // 0.15: a sprite drawn over BG0 stays in front of every hill it overlaps on screen. SMB2/SMA hill bodies are
-            // scenery you walk and fly in front of; at the depth under its feet, Peach floating past a hill that steps
-            // forward (or anyone on the ground in front of one) went behind the hill's face in the diorama / low views.
-            if (kind == 2 && box[s] != null)
-                for (int sy = gy0[s] + 4; sy < feetY[s] - 2; sy += 8) for (int sx = gx0[s] + 4; sx < gx1[s] - 2; sx += 8)
-                    nest = Math.max(nest, nestAt(camX + sx, camY + sy));
-            zs += nest * depth * HILL_STEP;
-        }
+        // 0.15: a sprite drawn over BG0 stays in front of every hill it overlaps on screen. SMB2/SMA hill bodies are
+        // scenery you walk and fly in front of; at the depth under its feet, Peach floating past a hill that steps
+        // forward (or anyone on the ground in front of one) went behind the hill's face in the diorama / low views.
+        // The whole group shares one eased nest (spriteDepths, 0.20).
+        if (mapped) zs += (box[s] != null ? gNest[gRoot[s]] : nestAt(camX + Math.round(ccx), camY + Math.round(ccy + boxH / 2f) + 4)) * depth * HILL_STEP;
+        // not the life meter (OAM 0.. at x 0, see extract.c): it's HUD, and its dotted empty hearts extruded into rings
+        boolean ext = thick && !member[s] && !(s < 8 && x == 0);
         if (affine) {
             for (int ty = 0; ty < h / 8; ty++) for (int tx = 0; tx < w / 8; tx++) {
                 int t = map1d ? tile + ty * (w / 8) + tx : tile + ty * 32 + tx;
-                uvSlot(slot(f, true, 4, t & 0x3FF, pal));
+                int sl = slot(f, true, 4, t & 0x3FF, pal);
+                if (ext) {   // texel (i, j) of this tile sits at centre + M * (tile offset + (i, j))
+                    float ox = tx * 8 - w / 2f, oy = ty * 8 - h / 2f;
+                    extrude(sl, ccx + m00 * ox + m01 * oy, ccy + m10 * ox + m11 * oy, m00, m10, m01, m11, zs, kind);
+                }
+                uvSlot(sl);
                 float lx = tx * 8 - w / 2f, ly = ty * 8 - h / 2f, rx = lx + 8, by = ly + 8;
                 // screen = centre + M * texture offset (y down); world y = -screen y
                 float blx = ccx + m00 * lx + m01 * by, bly = ccy + m10 * lx + m11 * by;
@@ -712,10 +779,44 @@ final class Scene3D {
         for (int ty = 0; ty < h / 8; ty++) for (int tx = 0; tx < w / 8; tx++) {
             int stx = hf ? w / 8 - 1 - tx : tx, sty = vf ? h / 8 - 1 - ty : ty;
             int t = map1d ? tile + sty * (w / 8) + stx : tile + sty * 32 + stx;
-            uvSlot(slot(f, true, 4, t & 0x3FF, pal));
-            float ua = hf ? u1 : u0, ub = hf ? u0 : u1, va = vf ? v1 : v0, vb = vf ? v0 : v1;
+            int sl = slot(f, true, 4, t & 0x3FF, pal);
             float qx = x + tx * 8, qy = y + ty * 8;
+            if (ext) extrude(sl, hf ? qx + 8 : qx, vf ? qy + 8 : qy, hf ? -1 : 1, 0, 0, vf ? -1 : 1, zs, kind);
+            uvSlot(sl);
+            float ua = hf ? u1 : u0, ub = hf ? u0 : u1, va = vf ? v1 : v0, vb = vf ? v0 : v1;
             quad(qx, -qy - 8, zs, qx + 8, -qy - 8, zs, qx + 8, -qy, zs, qx, -qy, zs, ua, vb, ub, vb, ub, va, ua, va, sShade, kind);
         }
+    }
+
+    // 0.20: sprites have thickness. Each sprite tile keeps its flat front face and gets walls SPRITE_THICK deep going back
+    // from it, along every texel edge where an opaque texel meets a clear one (or the tile's edge): pixel art extruded
+    // like a stack of little blocks. A wall takes its texel's colour, shaded like the block faces (top 0.86, sides 0.66,
+    // bottom 0.45). Walls go backwards, so feet still meet the ground's front edge. The renderer draws the sprite pass
+    // with its own depth buffer so a sprite hides its own walls but still stays in front of the terrain.
+    static final float SPRITE_THICK = 4f;
+    /** Walls of one 8x8 sprite tile in atlas slot sl. Texel (i, j) covers the screen parallelogram from
+     *  (ox, oy) + i * (ix, iy) + j * (jx, jy) to one step further in i and j (flips and affine matrices included). */
+    private void extrude(int sl, float ox, float oy, float ix, float iy, float jx, float jy, float zs, float kind) {
+        int ax = (sl % (ATLAS_W / 8)) * 8, ay = (sl / (ATLAS_W / 8)) * 8;
+        float zb = zs - Math.min(SPRITE_THICK, depth * 0.5f);
+        for (int j = 0; j < 8; j++) for (int i = 0; i < 8; i++) {
+            if (!opaqueTexel(ax, ay, i, j)) continue;
+            float u = (ax + i + 0.5f) / ATLAS_W, v = (ay + j + 0.5f) / ATLAS_H;
+            // edge towards each clear neighbour: start corner (a, b) in texel steps, edge direction, outward normal
+            for (int e = 0; e < 4; e++) {
+                int ni = i + (e == 0 ? 1 : e == 1 ? -1 : 0), nj = j + (e == 2 ? -1 : e == 3 ? 1 : 0);
+                if (opaqueTexel(ax, ay, ni, nj)) continue;
+                int a = e == 0 ? i + 1 : i, b = e == 3 ? j + 1 : j;          // first corner of the edge
+                int da = e >= 2 ? 1 : 0, db = e < 2 ? 1 : 0;                 // along the edge
+                float px = ox + ix * a + jx * b, py = oy + iy * a + jy * b;
+                float qx = px + ix * da + jx * db, qy = py + iy * da + jy * db;
+                float nx = (ni - i) * ix + (nj - j) * jx, ny = (ni - i) * iy + (nj - j) * jy;   // screen y down
+                float sh = Math.abs(nx) >= Math.abs(ny) ? 0.66f : ny < 0 ? 0.86f : 0.45f;
+                quad(px, -py, zs, qx, -qy, zs, qx, -qy, zb, px, -py, zb, u, v, u, v, u, v, u, v, sShade * sh, kind);
+            }
+        }
+    }
+    private boolean opaqueTexel(int ax, int ay, int i, int j) {
+        return i >= 0 && j >= 0 && i < 8 && j < 8 && atlas[((ay + j) * ATLAS_W + ax + i) * 4 + 3] != 0;
     }
 }

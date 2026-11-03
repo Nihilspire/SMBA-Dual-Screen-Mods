@@ -161,6 +161,25 @@ outline floating in front of a sunken middle. A pyramid is now found from its me
 RAM-MAP) and drawn as two sloped faces of a real pyramid seen corner-on, as the art shows it (light left face, dark right
 face): the outline stays on the back plane and the corner facing the camera comes forward to 0.85 of the block depth.
 Nothing else in the 3D view changed (23 test spots compared with 0.18; only 2-1 differs).
+**0.20:** sprites next to stacked hills and logs over waterfalls (1-1's main area). A sprite's depth comes from the hill
+under its feet or any hill its box overlaps (0.15), which changes in whole steps of 0.75 of the block depth: a Shy Guy
+walking along a hill step snapped 21 px on screen in one frame in the diorama view, and at a step's edge flicked
+forward and back on consecutive frames. Each sprite group now eases to its depth (a fifth of the way per frame, matched
+to last frame's group by its feet; at most 0.6 px of extra movement per frame over a 240-frame 1-1 recording). The
+log bridges: the ground under a forward hill comes forward with it (0.14), and so did the log's end piece under the
+hill, while the rest of the log stayed at the back, so the log kinked into a notch between its banks. A run of
+blocks in a row between two blocks that sit further forward now takes the nearer one's depth (also closes the notch
+in the ground between two forward hills). 123 spots over 11 levels compared with 0.19; only those two kinds differ.
+**Ground lip:** ground and other solid blocks stand 0.375 of the block depth in front of the hill scenery at the same
+nest. Flush with the cliff behind them, characters looked pasted on the wall; now they stand on a strip of grass in
+front of it (less than a hill step, so a hill that steps forward still covers the ground behind it).
+**Thick sprites** (Settings > 3D VIEW > THICK SPRITES, on by default): every sprite pixel is a little block. Each sprite
+tile keeps its flat front and gets walls 4 px deep going back from it along every edge where an opaque texel meets a
+clear one, in that texel's colour shaded like the block faces (lit tops, darker sides and undersides); affine sprites
+(giant Shy Guys) are extruded through their matrix. Sprites are drawn in their own depth pass (depth cleared, LEQUAL so
+the higher-priority OAM entry still wins a tie), so they stay in front of the terrain as before but hide their own
+walls. Not extruded: the life meter (HUD) and sprite-built platforms (already sliced through the block depth).
+Desktop testing from a battery save: `tests/scene3d` as before, levels reached through the Yoshi Challenge picker.
 
 ## Build
 ```

@@ -241,11 +241,16 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         GLES20.glUniform1i(uMode, 0);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, s.caveStart);
         if (s.caveCount > 0) { GLES20.glUniform1i(uMode, 1); GLES20.glDrawArrays(GLES20.GL_TRIANGLES, s.caveStart, s.caveCount); }
-        if (s.hudStart > s.spriteStart) {     // sprites: no depth test, so nothing that overlaps terrain in 2D is cut off
+        // sprites: their own depth pass (depth cleared first), so nothing that overlaps terrain in 2D is cut off but a
+        // thick sprite (Scene3D.extrude) hides its own walls. LEQUAL: at equal depth the later (higher priority) OAM entry
+        // wins, as on the GBA. No culling: the walls face every way.
+        if (s.hudStart > s.spriteStart) {
             GLES20.glUniform1i(uMode, 0);
-            GLES20.glDisable(GLES20.GL_DEPTH_TEST);
+            GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT);
+            GLES20.glDepthFunc(GLES20.GL_LEQUAL);
+            GLES20.glDisable(GLES20.GL_CULL_FACE);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES, s.spriteStart, s.hudStart - s.spriteStart);
-            GLES20.glEnable(GLES20.GL_DEPTH_TEST);
+            GLES20.glDepthFunc(GLES20.GL_LESS);
         }
         // HUD layer (BG3): flat, in the 3:2 picture's own pixels
         flatQuad(hudTex);

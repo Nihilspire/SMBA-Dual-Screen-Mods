@@ -134,6 +134,7 @@
       opt('BACK WALL', { near: 'NEAR', far: 'DEEP', off: 'OFF' }[s.back3d] || 'NEAR', function (d) { cycle('back3d', ['near', 'far', 'off'], d); });
       opt('BACKGROUND', onoff(s.cave3d), function () { set('cave3d', !s.cave3d); });
       opt('PLAYER LIGHT', onoff(s.light3d), function () { set('light3d', !s.light3d); });
+      opt('THICK SPRITES', onoff(s.thick3d !== false), function () { set('thick3d', !(s.thick3d !== false)); });
       if (!info.linux) opt('3D BORDERS', onoff(s.border3d !== false), function () { set('border3d', !(s.border3d !== false)); });
       backRow();
     } else if (page === 'controls') {
