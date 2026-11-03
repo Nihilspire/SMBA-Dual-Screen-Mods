@@ -64,7 +64,7 @@ final class Scene3D {
     }
 
     // ------------------------------------------------------------------ BG layers
-    private static final class Bg { int cnt, cb, sb, size, hofs, vofs, w, h; boolean on; }
+    private static final class Bg { int cnt, cb, sb, size, hofs, vofs, w, h; boolean on; int prio() { return cnt & 3; } }
     private final Bg[] bg = { new Bg(), new Bg(), new Bg(), new Bg() };
     private void readBgs(byte[] f) {
         int disp = u16(f, IO);
@@ -508,20 +508,32 @@ final class Scene3D {
             if (blockFront(cls, nst, hil, r + 1, c, zf, D) < zt) quad(x0, y1, zb, x0, y1, zt, x0, y0, zt, x0, y0, zb, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
             if (blockFront(cls, nst, hil, r + 1, c + 2, zf, D) < zt) quad(x1, y1, zt, x1, y1, zb, x1, y0, zb, x1, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 0.66f, 0);
         }
-        // backdrop: the game's own far layers (BG2 under BG1) around the screen, on a far plane
+        // BG3 is the HUD (drawn flat on top) only while it is the frontmost layer, as in the levels (priority 0). On the
+        // character select it is priority 3: the purple backdrop and the stage, which as a HUD covered the characters
+        // and the text (0.19-0.20); there it is the furthest of the far layers instead.
+        boolean hudTop = true;
+        for (int i = 0; i < 3; i++) if (bg[i].on && bg[i].prio() < bg[3].prio()) hudTop = false;
+        // backdrop: the game's own far layers (BG2 under BG1, BG3 under both when it isn't the HUD) around the screen, on
+        // a far plane
         caveStart = nv; caveCount = 0;
         if (cave) {
             int ox = (BD_W - W) / 2, oy = (BD_H - H) / 2;
-            long key = layerKey(f, bg[1]) * 31 + layerKey(f, bg[2]);
+            Bg[] far = hudTop ? new Bg[] { bg[2], bg[1] } : new Bg[] { bg[3], bg[2], bg[1] };
+            for (int i = 1; i < far.length; i++)   // back first (higher priority number); ties keep BG3 back
+                for (int j = i; j > 0 && far[j].prio() > far[j - 1].prio(); j--) { Bg t = far[j]; far[j] = far[j - 1]; far[j - 1] = t; }
+            long key = hudTop ? 0 : 17;
+            for (Bg l : far) key = key * 31 + layerKey(f, l);
             if (key != bdKey) {          // only when a far layer scrolled or changed
                 bdKey = key;
                 // rows near the screen only: further up/down the layers wrap into unrelated map data
                 // (and columns: games stream map columns in as the camera moves, so the rest of the map is stale)
                 int ya = oy, yb = oy + H, xa = ox, xb = ox + W;   // only what is on screen: the rest of the map is stale
-                drawLayer(f, bg[2], backdrop, BD_W, BD_H, -ox, -oy, true, xa, xb, ya, yb);
+                drawLayer(f, far[0], backdrop, BD_W, BD_H, -ox, -oy, true, xa, xb, ya, yb);
                 byte[] tmp = scratch;
-                drawLayer(f, bg[1], tmp, BD_W, BD_H, -ox, -oy, true, xa, xb, ya, yb);
-                for (int y = ya; y < yb; y++) for (int i = y * BD_W + xa; i < y * BD_W + xb; i++) if (tmp[i * 4 + 3] != 0) System.arraycopy(tmp, i * 4, backdrop, i * 4, 4);
+                for (int l = 1; l < far.length; l++) {
+                    drawLayer(f, far[l], tmp, BD_W, BD_H, -ox, -oy, true, xa, xb, ya, yb);
+                    for (int y = ya; y < yb; y++) for (int i = y * BD_W + xa; i < y * BD_W + xb; i++) if (tmp[i * 4 + 3] != 0) System.arraycopy(tmp, i * 4, backdrop, i * 4, 4);
+                }
                 // the sky as seen: the far layers' most common colour along the top of the screen when they cover it
                 // (7-1's palette colour 0 is black behind a light sky layer), else palette colour 0
                 java.util.HashMap<Integer, Integer> hist = new java.util.HashMap<Integer, Integer>();
@@ -555,6 +567,14 @@ final class Scene3D {
             quad(cx - hw, cy - hh, z, cx + hw, cy - hh, z, cx + hw, cy + hh, z, cx - hw, cy + hh, z, 0, 1, 1, 1, 1, 0, 0, 0, 1, 3);
             caveCount = nv - caveStart;
         }
+        // 0.21: the sky eases to its new colour instead of jumping. Taken from whatever far layer covers the top of the
+        // screen, it flipped every few frames as the camera moved (5-3's cave between black, brown and olive rock, 5-1
+        // between the clouds and the bushes), and the whole space round the level flashed. A new area or screen snaps.
+        int sk = (mapped ? 1 << 12 : 0) | var(f, Gba.CURRENT_LEVEL) << 4 | var(f, Gba.AREA_NO);
+        int tr = skyRgb >> 16 & 255, tg = skyRgb >> 8 & 255, tb = skyRgb & 255;
+        if (sk != skyKey) { skyKey = sk; skyR = tr; skyG = tg; skyB = tb; }
+        else { skyR += (tr - skyR) * 0.08f; skyG += (tg - skyG) * 0.08f; skyB += (tb - skyB) * 0.08f; }
+        skyRgb = Math.round(skyR) << 16 | Math.round(skyG) << 8 | Math.round(skyB);
         // light on the player
         spriteStart = nv;
         int px = var16(f, Gba.PLAYER_X) - camX, py = var16(f, Gba.PLAYER_Y) - camY;
@@ -583,14 +603,20 @@ final class Scene3D {
             }
             zOff = 0; sShade = 1;
         }
-        // HUD (BG3) drawn flat by the renderer
+        glow(f);
+        // HUD (BG3) drawn flat by the renderer; empty while BG3 is a far layer
         hudStart = nv;
-        long hk = layerKey(f, bg[3]);
-        if (hk != hudKey) { hudKey = hk; drawLayer(f, bg[3], hud, 256, 256, 0, 0, true, 0, W, 0, H); hudChanged = true; }
+        long hk = hudTop ? layerKey(f, bg[3]) : 3;
+        if (hk != hudKey) {
+            hudKey = hk;
+            if (hudTop) drawLayer(f, bg[3], hud, 256, 256, 0, 0, true, 0, W, 0, H); else Arrays.fill(hud, (byte) 0);
+            hudChanged = true;
+        }
         atlasChanged = true;
     }
     private final byte[] scratch = new byte[BD_W * BD_H * 4];
-    private int bdSky = -1;
+    private int bdSky = -1, skyKey = -1;
+    private float skyR, skyG, skyB;
     private long bdKey = 1, hudKey = 1;
     /** Cheap fingerprint of a layer: control, scroll, its map, a sample of its tiles, the palette. */
     private long layerKey(byte[] f, Bg b) {
@@ -785,6 +811,59 @@ final class Scene3D {
             uvSlot(sl);
             float ua = hf ? u1 : u0, ub = hf ? u0 : u1, va = vf ? v1 : v0, vb = vf ? v0 : v1;
             quad(qx, -qy - 8, zs, qx + 8, -qy - 8, zs, qx + 8, -qy, zs, qx, -qy, zs, ua, vb, ub, vb, ub, va, ua, va, sShade, kind);
+        }
+    }
+
+    // 0.21: the window effect. SMA's light through an open door (3-3) is an OBJ window (mode-2 sprites, never drawn
+    // themselves) inside which BLDCNT brightens everything by BLDY/16. Without it the doorway showed as a grey slab and
+    // the shaft of light was missing. The window (the union of the mode-2 sprites' opaque pixels) goes out as one quad
+    // per run of pixels on each row, so overlapping window sprites don't brighten twice; kind 6 (brighten) / 7 (darken)
+    // quads draw as white / black at alpha BLDY/16, last in the sprite pass, on the plane a sprite there would stand on.
+    private final boolean[] win = new boolean[W * H];
+    private void glow(byte[] f) {
+        int disp = u16(f, IO), winout = u16(f, IO + 0x4A), bld = u16(f, IO + 0x50), evy = Math.min(16, u16(f, IO + 0x54) & 31);
+        int fx = (bld >> 6) & 3;
+        if ((disp & 0x8000) == 0 || (winout & 0x2000) == 0 || fx < 2 || evy == 0) return;
+        boolean map1d = (disp & 0x40) != 0, any = false;
+        Arrays.fill(win, false);
+        for (int s = 0; s < 128; s++) {
+            int a0 = u16(f, OAM + s * 8), a1 = u16(f, OAM + s * 8 + 2), a2 = u16(f, OAM + s * 8 + 4);
+            if ((a0 & 0x300) == 0x200 || ((a0 >> 10) & 3) != 2 || (a0 & 0x2000) != 0 || (a0 >> 14) == 3) continue;
+            int w = OBJ_SIZES[(a0 >> 14) * 4 + (a1 >> 14)][0], h = OBJ_SIZES[(a0 >> 14) * 4 + (a1 >> 14)][1];
+            boolean affine = (a0 & 0x100) != 0, dbl = affine && (a0 & 0x200) != 0;
+            int bw = dbl ? 2 * w : w, bh = dbl ? 2 * h : h, y = a0 & 255, x = a1 & 511, tile = a2 & 0x3FF;
+            if (y >= 160) y -= 256;
+            if (x >= 240) x -= 512;
+            float pa = 1, pb = 0, pc = 0, pd = 1;
+            if (affine) {
+                int po = OAM + ((a1 >> 9) & 31) * 32;
+                pa = (short) u16(f, po + 6) / 256f; pb = (short) u16(f, po + 14) / 256f;
+                pc = (short) u16(f, po + 22) / 256f; pd = (short) u16(f, po + 30) / 256f;
+            }
+            for (int sy = Math.max(0, y); sy < Math.min(H, y + bh); sy++) for (int sx = Math.max(0, x); sx < Math.min(W, x + bw); sx++) {
+                int tx, ty;
+                if (affine) {   // texture offset = matrix * screen offset from the box centre
+                    float dx = sx - x - bw / 2f + 0.5f, dy = sy - y - bh / 2f + 0.5f;
+                    tx = (int) Math.floor(pa * dx + pb * dy + w / 2f); ty = (int) Math.floor(pc * dx + pd * dy + h / 2f);
+                    if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+                } else {
+                    tx = sx - x; ty = sy - y;
+                    if ((a1 & 0x1000) != 0) tx = w - 1 - tx;
+                    if ((a1 & 0x2000) != 0) ty = h - 1 - ty;
+                }
+                int t = (tile + (ty >> 3) * (map1d ? w / 8 : 32) + (tx >> 3)) & 0x3FF;
+                int o = VRAM + 0x10000 + t * 32 + (ty & 7) * 4 + ((tx & 7) >> 1);
+                if (o < VRAM + 0x18000 && ((u8(f[o]) >> ((tx & 1) * 4)) & 15) != 0) { win[sy * W + sx] = true; any = true; }
+            }
+        }
+        if (!any) return;
+        float a = evy / 16f, kind = fx == 2 ? 6 : 7;
+        for (int sy = 0; sy < H; sy++) for (int sx = 0; sx < W; ) {
+            if (!win[sy * W + sx]) { sx++; continue; }
+            int e = sx; while (e < W && win[sy * W + e]) e++;
+            float z = depth / 2f + 0.05f + (mapped ? nestAt(camX + (sx + e) / 2, camY + sy) * depth * HILL_STEP : 0);
+            quad(sx, -sy - 1, z, e, -sy - 1, z, e, -sy, z, sx, -sy, z, 0, 0, 0, 0, 0, 0, 0, 0, a, kind);
+            sx = e;
         }
     }
 

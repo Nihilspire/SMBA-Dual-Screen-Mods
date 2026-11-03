@@ -67,6 +67,7 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         "    if (b.a < 0.5) discard;\n" +
         "    gl_FragColor = vec4(mix(uBg, b.rgb, 0.85), 1.0); return;\n" +
         "  }\n" +
+        "  if (vKind > 5.5) { gl_FragColor = vec4(vec3(vKind > 6.5 ? 0.0 : 1.0), vShade); return; }\n" +   // window brighten / darken
         "  vec4 c = texture2D(uTex, vUv);\n" +
         "  if (uMode == 2) { if (c.a < 0.5) discard; gl_FragColor = vec4(c.rgb, 1.0); return; }\n" +
         "  if (c.a < 0.5) { if (vKind < 0.5) c = vec4(uBg * 0.8, 1.0); else discard; }\n" +
@@ -243,13 +244,17 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         if (s.caveCount > 0) { GLES20.glUniform1i(uMode, 1); GLES20.glDrawArrays(GLES20.GL_TRIANGLES, s.caveStart, s.caveCount); }
         // sprites: their own depth pass (depth cleared first), so nothing that overlaps terrain in 2D is cut off but a
         // thick sprite (Scene3D.extrude) hides its own walls. LEQUAL: at equal depth the later (higher priority) OAM entry
-        // wins, as on the GBA. No culling: the walls face every way.
+        // wins, as on the GBA. No culling: the walls face every way. Blending for the window-effect quads at the end of the
+        // pass (Scene3D.glow); everything else in it is opaque.
         if (s.hudStart > s.spriteStart) {
             GLES20.glUniform1i(uMode, 0);
             GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT);
             GLES20.glDepthFunc(GLES20.GL_LEQUAL);
             GLES20.glDisable(GLES20.GL_CULL_FACE);
+            GLES20.glEnable(GLES20.GL_BLEND);
+            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES, s.spriteStart, s.hudStart - s.spriteStart);
+            GLES20.glDisable(GLES20.GL_BLEND);
             GLES20.glDepthFunc(GLES20.GL_LESS);
         }
         // HUD layer (BG3): flat, in the 3:2 picture's own pixels

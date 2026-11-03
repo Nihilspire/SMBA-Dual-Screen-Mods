@@ -180,6 +180,16 @@ clear one, in that texel's colour shaded like the block faces (lit tops, darker 
 the higher-priority OAM entry still wins a tie), so they stay in front of the terrain as before but hide their own
 walls. Not extruded: the life meter (HUD) and sprite-built platforms (already sliced through the block depth).
 Desktop testing from a battery save: `tests/scene3d` as before, levels reached through the Yoshi Challenge picker.
+**0.21:** the character select (shown before every level) was a purple slab: BG3 was always drawn flat on top as the
+HUD, but on that screen it is the backmost layer (priority 3, the backdrop and stage), and it covered the characters
+and the text. BG3 is the HUD only while no other layer is in front of it; otherwise it joins the far layers, behind
+BG2/BG1 by priority. The light through an open door (3-3) is an OBJ window inside which the game brightens everything
+by BLDY/16; the 3D view skipped the window sprites (0.13) but had no effect, so the doorway was a grey slab and the
+shaft was missing. The window (union of the mode-2 sprites' pixels) now goes out as one quad per run of pixels per row,
+drawn white (or black, for darken) at alpha BLDY/16 at the end of the sprite pass. The sky colour, taken from whatever
+far layer covers the top of the screen, flipped every few frames as the camera moved (5-3's cave between black, brown
+and olive rock; 5-1 between clouds and bushes) and the space round the level flashed; it now eases (8% per frame) and
+snaps only on a new area or screen.
 
 ## Build
 ```
