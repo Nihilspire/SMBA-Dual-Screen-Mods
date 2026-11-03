@@ -17,7 +17,9 @@ if [ ! -f "$SO" ] || [ -n "$REBUILD_NATIVE" ] || [ -n "$(find "$ROOT/native" -ne
 fi
 cp "$SO" "$B/lib/arm64-v8a/"
 aapt package -f -m -J "$B/gen" -M "$ROOT/app/AndroidManifest.xml" -S "$ROOT/app/res" -A "$ROOT/app/assets" -I "$ANDROID_JAR" -F "$B/res.apk"
-if ! javac -nowarn --release 8 -encoding UTF-8 -cp "$ANDROID_JAR" -d "$B/classes" $(find "$B/gen" "$ROOT/app/src" -name '*.java') > "$B/javac.log" 2>&1; then
+# sources through a quoted argument file: the checkout's path may have spaces in it
+find "$B/gen" "$ROOT/app/src" -name '*.java' -printf '"%p"\n' > "$B/sources.txt"
+if ! javac -nowarn --release 8 -encoding UTF-8 -cp "$ANDROID_JAR" -d "$B/classes" @"$B/sources.txt" > "$B/javac.log" 2>&1; then
   grep -v "^Note:" "$B/javac.log"; echo "javac failed"; exit 1
 fi
 dalvik-exchange --dex --min-sdk-version=23 --output="$B/classes.dex" "$B/classes"

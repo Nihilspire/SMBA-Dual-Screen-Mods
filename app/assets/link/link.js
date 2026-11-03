@@ -639,16 +639,14 @@
     if (tickN - zoomShown < 20) { var zn = zoomName, zw = zn.length * 8 + 8; ctx.fillStyle = 'rgba(30,16,4,0.75)'; ctx.fillRect(inner.x + inner.w / 2 - zw / 2, inner.y + 14, zw, 12); G.textC(ctx, zn, inner.x + inner.w / 2, inner.y + 16, C.white); }
     ctx.restore();
   }
-  // you: a map pin standing on your feet — a round head in your character's colour with a white ring, pointing down.
-  // (0.11's upright rectangle read as a door.)
+  // you: a pink square with a white outline over your body, one pixel of dark round it so it holds up on white sky and
+  // snow. (0.11's upright rectangle read as a door; 0.12-0.21 used a pin in the character's colour.)
+  var YOU_PINK = '#ff4fa3';
   function you(pt) {
-    var x = Math.round(pt[0]), y = Math.round(pt[1]);
-    ctx.fillStyle = 'rgba(30,16,4,0.35)'; ctx.fillRect(x - 3, y, 7, 2);                 // shadow on the ground
-    ctx.fillStyle = '#2a1404';
-    ctx.beginPath(); ctx.moveTo(x - 4, y - 9); ctx.lineTo(x + 5, y - 9); ctx.lineTo(x + 0.5, y + 0.5); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.arc(x + 0.5, y - 11.5, 6, 0, 7); ctx.fill();
-    ctx.fillStyle = C.white; ctx.beginPath(); ctx.arc(x + 0.5, y - 11.5, 5, 0, 7); ctx.fill();
-    ctx.fillStyle = S.CHAR_COL[S.character(ram)]; ctx.beginPath(); ctx.arc(x + 0.5, y - 11.5, 3.5, 0, 7); ctx.fill();
+    var x = Math.round(pt[0]), y = Math.round(pt[1]) - 8;                                // pt is your feet
+    ctx.fillStyle = '#2a1404'; ctx.fillRect(x - 6, y - 6, 12, 12);
+    ctx.fillStyle = C.white; ctx.fillRect(x - 5, y - 5, 10, 10);
+    ctx.fillStyle = YOU_PINK; ctx.fillRect(x - 3, y - 3, 6, 6);
   }
   function tag(pt, letter, col) {
     var x = Math.round(pt[0]), y = Math.round(pt[1]);
