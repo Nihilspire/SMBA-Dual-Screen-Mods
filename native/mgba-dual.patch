@@ -1,0 +1,134 @@
+diff --git a/src/arm/arm.c b/src/arm/arm.c
+index 0b92d7f..ad6309e 100644
+--- a/src/arm/arm.c
++++ b/src/arm/arm.c
+@@ -226,14 +226,23 @@ static inline void ThumbStep(struct ARMCore* cpu) {
+ 	instruction(cpu, opcode);
+ }
+ 
++/* Dual: NO SLOWDOWN overclock. Instruction cycles are halved, so the CPU runs 2x relative to video, sound, timers
++ * and DMA (all event-driven). Halt/IntrWait skip to the next event as before. */
++int gbx_overclock = 0;
++static int gbx_oc_rem;
++#define GBX_STEP(STEP) do { \
++		int32_t _c0 = cpu->cycles; STEP(cpu); \
++		if (gbx_overclock) { int32_t _d = cpu->cycles - _c0 + gbx_oc_rem; gbx_oc_rem = _d & 1; cpu->cycles = _c0 + (_d >> 1); } \
++	} while (0)
++
+ void ARMRun(struct ARMCore* cpu) {
+ 	while (cpu->cycles >= cpu->nextEvent) {
+ 		cpu->irqh.processEvents(cpu);
+ 	}
+ 	if (cpu->executionMode == MODE_THUMB) {
+-		ThumbStep(cpu);
++		GBX_STEP(ThumbStep);
+ 	} else {
+-		ARMStep(cpu);
++		GBX_STEP(ARMStep);
+ 	}
+ 	while (cpu->cycles >= cpu->nextEvent) {
+ 		cpu->irqh.processEvents(cpu);
+@@ -243,11 +252,11 @@ void ARMRun(struct ARMCore* cpu) {
+ void ARMRunLoop(struct ARMCore* cpu) {
+ 	if (cpu->executionMode == MODE_THUMB) {
+ 		while (cpu->cycles < cpu->nextEvent) {
+-			ThumbStep(cpu);
++			GBX_STEP(ThumbStep);
+ 		}
+ 	} else {
+ 		while (cpu->cycles < cpu->nextEvent) {
+-			ARMStep(cpu);
++			GBX_STEP(ARMStep);
+ 		}
+ 	}
+ 	cpu->irqh.processEvents(cpu);
+diff --git a/src/gba/bios.c b/src/gba/bios.c
+index edb21e2..9ac95d9 100644
+--- a/src/gba/bios.c
++++ b/src/gba/bios.c
+@@ -405,6 +405,7 @@ static int32_t _Sqrt(uint32_t x, uint32_t* cycles) {
+ 	return bound;
+ }
+ 
++unsigned gbx_vblank_waits; /* Dual: counts Halt / IntrWait / VBlankIntrWait calls (lag-frame meter) */
+ void GBASwi16(struct ARMCore* cpu, int immediate) {
+ 	struct GBA* gba = (struct GBA*) cpu->master;
+ 	mLOG(GBA_BIOS, DEBUG, "SWI: %02X r0: %08X r1: %08X r2: %08X r3: %08X",
+@@ -424,6 +425,9 @@ void GBASwi16(struct ARMCore* cpu, int immediate) {
+ 		return;
+ 	}
+ 
++	if (immediate == GBA_SWI_HALT || immediate == GBA_SWI_INTR_WAIT || immediate == GBA_SWI_VBLANK_INTR_WAIT) {
++		++gbx_vblank_waits;
++	}
+ 	bool useStall = false;
+ 	switch (immediate) {
+ 	case GBA_SWI_SOFT_RESET:
+diff --git a/src/gba/memory.c b/src/gba/memory.c
+index aa01fdc..25e40db 100644
+--- a/src/gba/memory.c
++++ b/src/gba/memory.c
+@@ -473,7 +473,15 @@ uint32_t GBALoadBad(struct ARMCore* cpu) {
+ 	return value;
+ }
+ 
++#ifdef GBX_TRACE
++void (*gbx_read_hook)(uint32_t addr, int size, uint32_t pc, uint32_t lr);
++#define GBX_TRACE_LOAD(A, S) do { if (gbx_read_hook) gbx_read_hook((A), (S), cpu->gprs[ARM_PC], cpu->gprs[ARM_LR]); } while (0)
++#else
++#define GBX_TRACE_LOAD(A, S) do {} while (0)
++#endif
++
+ uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
++	GBX_TRACE_LOAD(address, 4);
+ 	struct GBA* gba = (struct GBA*) cpu->master;
+ 	struct GBAMemory* memory = &gba->memory;
+ 	uint32_t value = 0;
+@@ -533,6 +541,7 @@ uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
+ }
+ 
+ uint32_t GBALoad16(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
++	GBX_TRACE_LOAD(address, 2);
+ 	struct GBA* gba = (struct GBA*) cpu->master;
+ 	struct GBAMemory* memory = &gba->memory;
+ 	uint32_t value = 0;
+@@ -648,6 +657,7 @@ uint32_t GBALoad16(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
+ }
+ 
+ uint32_t GBALoad8(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
++	GBX_TRACE_LOAD(address, 1);
+ 	struct GBA* gba = (struct GBA*) cpu->master;
+ 	struct GBAMemory* memory = &gba->memory;
+ 	uint32_t value = 0;
+@@ -822,7 +832,15 @@ uint32_t GBALoad8(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
+ #define STORE_BAD \
+ 	mLOG(GBA_MEM, GAME_ERROR, "Bad memory Store32: 0x%08X", address);
+ 
++#ifdef GBX_TRACE
++void (*gbx_trace_hook)(uint32_t addr, uint32_t value, int size, uint32_t pc, uint32_t lr);
++#define GBX_TRACE_STORE(A, V, S) do { if (gbx_trace_hook) gbx_trace_hook((A), (uint32_t) (V), (S), cpu->gprs[ARM_PC], cpu->gprs[ARM_LR]); } while (0)
++#else
++#define GBX_TRACE_STORE(A, V, S) do {} while (0)
++#endif
++
+ void GBAStore32(struct ARMCore* cpu, uint32_t address, int32_t value, int* cycleCounter) {
++	GBX_TRACE_STORE(address, value, 4);
+ 	struct GBA* gba = (struct GBA*) cpu->master;
+ 	struct GBAMemory* memory = &gba->memory;
+ 	int wait = 0;
+@@ -875,6 +893,7 @@ void GBAStore32(struct ARMCore* cpu, uint32_t address, int32_t value, int* cycle
+ }
+ 
+ void GBAStore16(struct ARMCore* cpu, uint32_t address, int16_t value, int* cycleCounter) {
++	GBX_TRACE_STORE(address, value, 2);
+ 	struct GBA* gba = (struct GBA*) cpu->master;
+ 	struct GBAMemory* memory = &gba->memory;
+ 	int wait = 0;
+@@ -1020,6 +1039,7 @@ void GBAStore16(struct ARMCore* cpu, uint32_t address, int16_t value, int* cycle
+ }
+ 
+ void GBAStore8(struct ARMCore* cpu, uint32_t address, int8_t value, int* cycleCounter) {
++	GBX_TRACE_STORE(address, value, 1);
+ 	struct GBA* gba = (struct GBA*) cpu->master;
+ 	struct GBAMemory* memory = &gba->memory;
+ 	int wait = 0;

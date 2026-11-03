@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c" width="960" height="540"></canvas>
+<script>
+// Renders SceneDump output with Renderer3D's shaders and camera (WebGL1 = GLES2). window.show(b64, preset)
+const VS = `attribute vec3 aPos; attribute vec2 aUv; attribute float aShade; attribute float aKind;
+uniform mat4 uMvp; varying vec2 vUv; varying float vShade; varying float vKind; varying vec3 vWorld;
+void main(){ vUv=aUv; vShade=aShade; vKind=aKind; vWorld=aPos; gl_Position=uMvp*vec4(aPos,1.0); }`;
+let FS = null;   // filled from Renderer3D.java by the test (window.FS)
+function persp(fov, asp, n, f) { const t = 1 / Math.tan(fov * Math.PI / 360), m = new Float32Array(16);
+  m[0] = t / asp; m[5] = t; m[10] = (f + n) / (n - f); m[11] = -1; m[14] = 2 * f * n / (n - f); return m; }
+function lookAt(e, c, u) {
+  let f = [c[0]-e[0], c[1]-e[1], c[2]-e[2]]; let l = Math.hypot(...f); f = f.map(v => v / l);
+  let s = [f[1]*u[2]-f[2]*u[1], f[2]*u[0]-f[0]*u[2], f[0]*u[1]-f[1]*u[0]]; l = Math.hypot(...s); s = s.map(v => v / l);
+  const uu = [s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]];
+  const m = new Float32Array(16);
+  m[0]=s[0]; m[4]=s[1]; m[8]=s[2]; m[1]=uu[0]; m[5]=uu[1]; m[9]=uu[2]; m[2]=-f[0]; m[6]=-f[1]; m[10]=-f[2]; m[15]=1;
+  m[12]=-(s[0]*e[0]+s[1]*e[1]+s[2]*e[2]); m[13]=-(uu[0]*e[0]+uu[1]*e[1]+uu[2]*e[2]); m[14]=(f[0]*e[0]+f[1]*e[1]+f[2]*e[2]); return m; }
+function mul(a, b) { const o = new Float32Array(16);
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k*4+j] * b[i*4+k]; o[i*4+j] = s; } return o; }
+const PRESETS = { tilt: [16, 0, 1], diorama: [30, -24, 0.92], side: [0, 0, 1], low: [-10, 18, 1.05], far: [22, 0, 0.62] };
+function mvp(W, H, pr, depth) {
+  const [pitch, yaw, zoom] = pr, fov = 32, asp = W / H;
+  const halfH = Math.max(80, 120 / asp) / zoom, dist = halfH / Math.tan(fov * Math.PI / 360) + depth;
+  const p = pitch * Math.PI / 180, y = yaw * Math.PI / 180, cx = 120, cy = -80;
+  const e = [cx + dist * Math.sin(y) * Math.cos(p), cy + dist * Math.sin(p), dist * Math.cos(y) * Math.cos(p)];
+  return { m: mul(persp(fov, asp, 10, 5000), lookAt(e, [cx, cy, 0], [0, 1, 0])), dist };
+}
+window.show = function (b64, preset) {
+  const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0)), dv = new DataView(raw.buffer);
+  const h = []; for (let i = 0; i < 14; i++) h.push(dv.getInt32(i * 4, true));
+  const [nv, caveStart, caveCount, spriteStart, hudStart, bdW, bdH, sky, mapped, lx, ly, la, depth, ground] = h;
+  let o = 56; const verts = new Float32Array(raw.buffer.slice(o, o + nv * 28)); o += nv * 28;
+  const atlas = raw.slice(o, o + 512 * 512 * 4); o += 512 * 512 * 4;
+  const bd = raw.slice(o, o + bdW * bdH * 4); o += bdW * bdH * 4;
+  const mask = raw.slice(o, o + 256 * 256); o += 256 * 256;
+  const hud = raw.slice(o, o + 256 * 256 * 4);
+  const cv = document.getElementById('c'); cv.width = innerWidth; cv.height = innerHeight;
+  const gl = cv.getContext('webgl', { antialias: false }), W = cv.width, H = cv.height;
+  const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(x); return x; };
+  const pg = gl.createProgram(); gl.attachShader(pg, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(pg, sh(gl.FRAGMENT_SHADER, window.FS)); gl.linkProgram(pg); gl.useProgram(pg);
+  const tex = (unit, w, h, fmt, data) => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texImage2D(gl.TEXTURE_2D, 0, fmt, w, h, 0, fmt, gl.UNSIGNED_BYTE, data);
+    [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER].forEach(p => gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST));
+    [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T].forEach(p => gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE)); };
+  if (window.STANDIN) {      // previews without game art: every tile becomes a flat block of its own average colour
+    for (let i = 0; i < 4096; i++) {
+      const ax = (i % 64) * 8, ay = (i / 64 | 0) * 8; let r = 0, g = 0, b = 0, n = 0;
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { const k = ((ay + y) * 512 + ax + x) * 4; if (atlas[k + 3]) { r += atlas[k]; g += atlas[k + 1]; b += atlas[k + 2]; n++; } }
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { const k = ((ay + y) * 512 + ax + x) * 4, edge = x === 0 || y === 0;
+        if (n) { const f = edge ? 0.8 : 1; atlas[k] = r / n * f; atlas[k + 1] = g / n * f; atlas[k + 2] = b / n * f; atlas[k + 3] = n > 20 || atlas[k + 3] ? 255 : 0; } }
+    }
+    for (let k = 0; k < bd.length; k += 4) if (bd[k + 3]) { bd[k] = bd[k + 1] = bd[k + 2] = 150; }
+    for (let k = 0; k < hud.length; k += 4) if (hud[k + 3]) { hud[k] = 240; hud[k + 1] = 220; hud[k + 2] = 160; }
+  }
+  tex(0, 512, 512, gl.RGBA, atlas); tex(1, bdW, bdH, gl.RGBA, bd);
+  tex(2, 256, 256, gl.LUMINANCE, mask); tex(3, 256, 256, gl.RGBA, hud);
+  const U = n => gl.getUniformLocation(pg, n);
+  gl.uniform1i(U('uTex'), 0); gl.uniform1i(U('uCave'), 1); gl.uniform1i(U('uMask'), 2);
+  const r = ((sky >> 16) & 255) / 255, g = ((sky >> 8) & 255) / 255, b = (sky & 255) / 255;
+  gl.uniform3f(U('uBg'), r, g, b); gl.uniform4f(U('uGround'), ((ground >> 16) & 255) / 255, ((ground >> 8) & 255) / 255, (ground & 255) / 255, ground < 0 ? 0 : 1); gl.uniform1i(U('uEdge'), 1);
+  gl.uniform1f(U('uLightOn'), la / 100 * (window.LIGHT ? 1 : 0)); gl.uniform2f(U('uLight'), lx / 100, ly / 100);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+  [['aPos', 3, 0], ['aUv', 2, 12], ['aShade', 1, 20], ['aKind', 1, 24]].forEach(([n, s, off]) => {
+    const l = gl.getAttribLocation(pg, n); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, s, gl.FLOAT, false, 28, off); });
+  const cam = mvp(W, H, Array.isArray(preset) ? preset : PRESETS[preset || 'tilt'], depth);   // [pitch, yaw, zoom] for clips
+  gl.viewport(0, 0, W, H); gl.clearColor(r, g, b, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+  gl.uniformMatrix4fv(U('uMvp'), false, cam.m); gl.uniform1i(U('uMode'), 0);
+  gl.drawArrays(gl.TRIANGLES, 0, caveStart);
+  if (caveCount > 0) { gl.uniform1i(U('uMode'), 1); gl.drawArrays(gl.TRIANGLES, caveStart, caveCount); }
+  if (hudStart > spriteStart) { gl.uniform1i(U('uMode'), 0); gl.disable(gl.DEPTH_TEST); gl.drawArrays(gl.TRIANGLES, spriteStart, hudStart - spriteStart); gl.enable(gl.DEPTH_TEST); }
+  {                                    // HUD layer (BG3), flat over the 3:2 picture
+    const asp = 1.5; let rw = W, rh = W / asp; if (rh > H) { rh = H; rw = H * asp; }
+    const rx = (W - rw) / 2, ry = (H - rh) / 2, m = new Float32Array(16);
+    const sx = rw / 240, sy = rh / 160;
+    m[0] = 2 / W * sx; m[5] = -2 / H * sy; m[10] = 1; m[15] = 1; m[12] = 2 * rx / W - 1; m[13] = 1 - 2 * ry / H;
+    const u = 240 / 256, v = 160 / 256;
+    const hq = new Float32Array([0,160,0,0,v,1,4, 240,160,0,u,v,1,4, 240,0,0,u,0,1,4, 0,160,0,0,v,1,4, 240,0,0,u,0,1,4, 0,0,0,0,0,1,4]);
+    const hb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, hb); gl.bufferData(gl.ARRAY_BUFFER, hq, gl.STATIC_DRAW);
+    [['aPos', 3, 0], ['aUv', 2, 12], ['aShade', 1, 20], ['aKind', 1, 24]].forEach(([n, s, off]) => {
+      const l = gl.getAttribLocation(pg, n); gl.vertexAttribPointer(l, s, gl.FLOAT, false, 28, off); });
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.uniformMatrix4fv(U('uMvp'), false, m); gl.uniform1i(U('uMode'), 2);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, null);
+    const ht = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, ht); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, hud);
+    [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER].forEach(p => gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST));
+    [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T].forEach(p => gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE));
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+  return { nv, mapped, dist: cam.dist, err: gl.getError() };
+};
+</script></body></html>

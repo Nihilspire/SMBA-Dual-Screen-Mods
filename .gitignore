@@ -1,0 +1,6 @@
+out/*
+!out/android/
+out/android/*
+!out/android/libsmadual.so
+tests/scene3d/out/
+*.apk
