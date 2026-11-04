@@ -256,6 +256,32 @@ player floated in front of them), and the banks still left out their side face n
 there, so sky showed round the log. A log now fills the depth like the box it was, round at the front and the back
 with a flat wooden top and bottom between, and banks (any block) keep their faces next to logs and jars.
 
+**0.28:** the ending card (as Metroid Dual's mission report and Shantae Dual's QUEST COMPLETE) replaces the ending's summary
+card. All through the ending and credits (sub-mode `03001991` = 4) the whole Link screen shows SUBCON IS FREE: the real date
+and time, play time, deaths, levels, Ace Coins, score, Yoshi eggs if any, each character's levels cleared with the MVP in
+gold, DEV CODES USED if any were, and a field you sign with a finger (CLEAR / SAVE). The stats are taken once, after the
+ending's init has counted 7-2. SAVE keeps the run with the signature as a small PNG in localStorage `sma.hall` (last 20;
+nothing shows the list yet). PLAYTEST CODES > ENDING CARD ON/OFF opens the card on the Link screen without touching the game,
+because jumping into the ending's later stages from a level freezes the picture. The status card's score now matches the
+HUD (the file holds the score / 10).
+
+**0.29:** a check of the 3D view against the 2D picture, every world, every camera:
+- **The sky.** Levels have no sky picture: the game rewrites colour 0 down the screen from a 16-colour table at `02002B20`, and
+  the 3D view only saw what colour 0 ends the frame as (white, or navy in 2-1). The far plane now has the real gradient.
+- **The world no longer ends in mid-air.** Terrain was built for the screen + 32 px and the far layers for the screen alone, so
+  FAR and DIORAMA showed a slab against an empty sky. `Scene3D.setCamera` works out how far each side of the view reaches and
+  `build` fills that. Past the area's edges solid ground and water run on (hill bodies downwards; pits stay open).
+- **The far layers go on past the screen**: real map rows up and down, real columns behind the camera. Columns ahead were never
+  written (they hold fill entries or a menu's tiles); dense scenery takes the column 256 px over there, which is only a fair
+  guess since the layers have no real period, and sparse clouds fade out past their last known column instead.
+- **Subspace is 3D** (it fell back to the flat picture): the extra page after the area's last, each metatile mirrored as the game
+  draws it, darkened by the game's own BLDCNT.
+- Natural ground and rock round off where they end, like the hills; the hills' rounding is now worked out from the neighbouring
+  cells instead of a per-pixel field, and only on exposed edges. The desert's cacti are round like the jars. Cloud shadows are
+  pink instead of grey (LOW showed them dark), and the desert's soft floor (`050`, no collision) comes forward from the back
+  wall to where sprites walk.
+- Build time per frame is about half of 0.27's at TILT and LOW and still below it at FAR and DIORAMA (desktop, same frames).
+
 ## Build
 ```
 bash tools/setup_toolchain.sh      # bionic headers + stub libs + compiler-rt builtins, android.jar, mGBA @ 7a12d6d + patch

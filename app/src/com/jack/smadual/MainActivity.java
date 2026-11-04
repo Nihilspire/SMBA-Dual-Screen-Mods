@@ -49,7 +49,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.zip.CRC32;
 
 public class MainActivity extends Activity {
-    static final String VERSION = "0.27";
+    static final String VERSION = "0.29";
     static final int PICK_ROM = 1;
 
     SharedPreferences prefs;
@@ -371,6 +371,10 @@ public class MainActivity extends Activity {
     String devAction(final String what) {
         if (!started) return "START A GAME FIRST";
         devUsed = true;
+        if (what.equals("report")) {   // the Link screen's ending card, on or off; the game itself is left alone
+            evalLink("window.toggleEnding&&toggleEnding()");
+            return "ENDING CARD ON / OFF";
+        }
         final String[] msg = { "DONE" };
         emu.call(new Runnable() { public void run() {
             switch (what) {
@@ -1043,7 +1047,7 @@ public class MainActivity extends Activity {
                     if (frame % 600 == 0) Native.saveFlush();         // the game's EEPROM save, when it changed
                 }
                 if (r != 0) publish(r >> 16, r & 0xFFFF);
-                if (view3d) { capture3d(snap); r3d.submit(snap, px, Gba.inGame()); glView.requestRender(); }
+                if (view3d) { capture3d(snap); r3d.submit(snap, px, Gba.inPlay3d()); glView.requestRender(); }
                 statFrames += runs;
                 long now = System.nanoTime();
                 if (now - statT >= 1000000000L) {
@@ -1222,5 +1226,6 @@ public class MainActivity extends Activity {
         Native.read(0x07000000, s, Scene3D.OAM, 0x400);
         Native.read(Gba.LEVEL_DATA, s, Scene3D.LVL, Scene3D.LVL_LEN);
         Native.read(Scene3D.VARS_ADDR, s, Scene3D.VARS, Scene3D.VARS_LEN);
+        Native.read(Scene3D.SKY_ADDR, s, Scene3D.SKY_TAB, Scene3D.SKY_LEN);
     }
 }

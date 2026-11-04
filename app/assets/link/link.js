@@ -136,6 +136,7 @@
       var t = G.b64(Native.tracker());
       if (t.length >= 28) trk = { time: u32(t, 0), deaths: u32(t, 4), cleared: u32(t, 8), whoLo: u32(t, 12), whoHi: u32(t, 16), warped: u32(t, 20) };
     }
+    readEnding();
     draw();
   }
   function cleared(L) { return trk && ((trk.cleared >>> L) & 1); }
@@ -363,8 +364,8 @@
     if (!ram || !romOk) { ctx.fillStyle = C.night; ctx.fillRect(0, 0, W, H); } else backdrop();
     buttons = []; mapBox = null; optPane = null;
     if (!ram || !romOk) { idle(); return; }
+    if (endPreview || S.ending(ram)) { endingCard(); return; }
     if (S.gameMode(ram) === 4) { marioBros(); drawTabs(); return; }
-    if (S.ending(ram)) { ending(); drawTabs(); return; }
     if (S.bonusChance(ram)) { bonusChance(); drawTabs(); return; }
     if (!S.inLevel(ram) && !trk) { idle('TITLE SCREEN', 'PICK A FILE AND PLAY'); return; }
     if (!layout.small || tab === 'status') { blockA(layout.a.x, layout.a.y); blockB(layout.b.x, layout.b.y); }
@@ -878,30 +879,90 @@
     var msg = S.mainState(ram) === 2 ? 'SPINNING' : spins ? 'PRESS A TO SPIN' : 'NO SPINS LEFT';
     G.textC(ctx, msg, cx, y + 62, T.muted);
   }
-  // The ending: a banner over Wart's room and the parade, then from the MVP stage on the run's summary: each
-  // character's levels cleared (the game's own MVP numbers, 03001148+) with the MVP marked, then the tracker's
-  // time and deaths and the file's levels, Ace Coins and eggs.
-  function ending() {
-    var st = S.endStage(ram), cx = W / 2, w = Math.min(W - 8, 220), x = Math.round(cx - w / 2);
-    var eggs = S.eggTotal(ram), h = 140 + (eggs ? 10 : 0), y = Math.max(4, Math.floor((H - 24 - h) / 2));
-    card(x, y, w, h);
-    var t = st < 7 ? 'WART IS BEATEN' : st < 8 ? 'SUBCON IS FREE' : st < 0x10 ? 'CONGRATULATIONS' : 'THE END';
-    if (t.length * 16 <= w - 8) G.textC(ctx, t, cx, y + 6, T.red, 2); else G.textC(ctx, t, cx, y + 10, T.red);
-    var n = [0, 1, 2, 3].map(function (c) { return S.charClears(ram, c); }), top = Math.max.apply(null, n), yy = y + 30;
-    ribbon('LEVELS CLEARED', x + 6, yy, C.red); yy += 14;
-    [0, 3, 2, 1].forEach(function (c) {                               // the MVP stage's order: Mario, Luigi, Toad, Peach
-      rrect(x + 6, yy, 8, 8, S.CHAR_COL[c]);
-      G.text(ctx, S.CHARS[c], x + 18, yy, CHAR_TEXT[c]);
-      bar(x + 70, yy, w - 120, top ? n[c] / top : 0, soft(S.CHAR_COL[c], 0.8));
-      G.textR(ctx, String(n[c]), x + w - 30, yy, C.dbrown);
-      if (top && n[c] === top) G.textR(ctx, 'MVP', x + w - 4, yy, T.gold);
-      yy += 12;
+  // 0.28: the ending card (as Metroid Dual's mission report and Shantae Dual's QUEST COMPLETE). All through the ending
+  // and credits (sub-mode 4, up to the wait on THE END) the whole Link screen shows the real date and time, the run's
+  // stats and a field you sign with a finger. The stats are taken once, after the ending's init (stage 1) has set 7-2's
+  // cleared bit. SAVE keeps the run with the signature as a small PNG in localStorage (sma.hall, last 20; nothing shows
+  // the list yet). The playtest action opens the card without the ending (toggleEnding), leaving the game alone.
+  var report = null, hall = load('sma.hall', []), sigBox = null, drawing = null, endPreview = false;
+  window.toggleEnding = function () { endPreview = !endPreview; if (!endPreview) report = null; draw(); };
+  function readEnding() {
+    if (!ram) return;                                    // the game paused or stopping isn't the end of the ending
+    if (!endPreview && !S.ending(ram)) { report = null; drawing = null; return; }
+    if (report || !(endPreview || S.endStage(ram) >= 2) || (!trk && Native.tracker)) return;
+    var now = new Date(), clears = [0, 1, 2, 3].map(function (c) { return S.charClears(ram, c); });
+    report = { date: now.getFullYear() + '-' + pad(now.getMonth() + 1, 2) + '-' + pad(now.getDate(), 2),
+               clock: pad(now.getHours(), 2) + ':' + pad(now.getMinutes(), 2), t: now.getTime(),
+               secs: trk ? trk.time / 59.7275 : 0, deaths: trk ? trk.deaths : 0, levels: S.clearedCount(ram), ace: S.aceTotal(ram),
+               eggs: S.eggTotal(ram), score: S.score(ram), clears: clears, dev: !!(window.Native && Native.devUsed && Native.devUsed()),
+               saved: false, sig: null, sw: 0, sh: 0 };
+  }
+  function endingCard() {
+    var r = report; sigBox = null; if (!r) return;
+    var x = 4, y0 = 4, w = W - 8, h = H - 8, cx = W / 2, px = x + 6, pw = w - 12, y = y0 + 4;
+    card(x, y0, w, h);
+    var big = H >= 300;                                  // portrait has room for the big title
+    G.textC(ctx, 'SUBCON IS FREE', cx, y, T.red, big ? 2 : 1); y += big ? 20 : 11;
+    G.textC(ctx, r.date + '  ' + r.clock, cx, y, C.dbrown); y += 12;
+    var whole = function (n, of) { return [n + '/' + of, n >= of ? T.green : C.dbrown]; };
+    var rows = [['PLAY TIME', hms(r.secs), C.dbrown], ['DEATHS', String(r.deaths), C.dbrown], ['LEVELS'].concat(whole(r.levels, 20)),
+                ['ACE COINS'].concat(whole(r.ace, 100)), ['SCORE', pad(r.score, 8), C.dbrown]];
+    if (r.eggs) rows.push(['YOSHI EGGS'].concat(whole(r.eggs, 40)));
+    var cols = pw >= 250 ? 2 : 1, gap = 10, colW = Math.floor((pw - gap * (cols - 1)) / cols), per = Math.ceil(rows.length / cols), rh = 10;
+    rows.forEach(function (row, i) {
+      var c = Math.floor(i / per), x0 = px + c * (colW + gap), yy = y + (i % per) * rh;
+      var lab = row[0].length * 8 + 8 + row[1].length * 8 > colW ? row[0].replace('PLAY TIME', 'TIME').replace('ACE COINS', 'ACES').replace('YOSHI EGGS', 'EGGS') : row[0];
+      G.text(ctx, lab, x0, yy, T.muted); G.textR(ctx, row[1], x0 + colW, yy, row[2]);
     });
-    yy += 4;
-    var rows = [['TIME', hms(trk ? trk.time / 59.7275 : 0), T.blue], ['DEATHS', String(trk ? trk.deaths : 0), T.red],
-                ['LEVELS', S.clearedCount(ram) + '/20', C.dgreen], ['ACE COINS', S.aceTotal(ram) + '%', T.red]];
-    if (eggs) rows.push(['EGGS', eggs + '/40', C.dgreen]);
-    rows.forEach(function (r) { G.text(ctx, r[0], x + 6, yy, r[2]); G.textR(ctx, r[1], x + w - 6, yy, C.dbrown); yy += 10; });
+    y += per * rh + 2;
+    // each character's levels cleared with the MVP in gold, the MVP stage's order and numbers: 4 across, or 2 x 2
+    var top = Math.max.apply(null, r.clears), across = pw >= 272 ? 4 : 2, cw = Math.floor(pw / across);
+    [0, 3, 2, 1].forEach(function (c, i) {
+      var x0 = px + (i % across) * cw, yy = y + Math.floor(i / across) * rh, mvp = top && r.clears[c] === top;
+      rrect(x0, yy, 8, 8, S.CHAR_COL[c]);
+      G.text(ctx, S.CHARS[c], x0 + 10, yy, CHAR_TEXT[c]);
+      G.textR(ctx, String(r.clears[c]), x0 + cw - 4, yy, mvp ? T.gold : C.dbrown);
+      if (mvp && cw >= 100) G.textR(ctx, 'MVP', x0 + cw - 24, yy, T.gold);
+    });
+    y += Math.ceil(4 / across) * rh + 2;
+    if (r.dev) { G.textC(ctx, 'DEV CODES USED', cx, y, T.red); y += 10; }
+    G.text(ctx, r.saved ? 'SIGNED' : 'SIGN YOUR NAME', px, y, r.saved ? T.green : T.red); y += 10;
+    // signature field: the same size once saved, so the drawing stays; a new screen shape stretches it to fit
+    var bw = pw, by = y, bh = Math.max(24, y0 + h - y - 18);
+    if (!r.sig || r.sw !== bw || r.sh !== bh) {
+      var old = r.sig, ow = r.sw, oh = r.sh; r.sig = new Uint8Array(bw * bh); r.sw = bw; r.sh = bh;
+      if (old) for (var k = 0; k < old.length; k++) if (old[k]) r.sig[Math.floor(Math.floor(k / ow) * bh / oh) * bw + Math.floor((k % ow) * bw / ow)] = 1;
+    }
+    sigBox = r.saved ? null : { x: px, y: by, w: bw, h: bh };
+    ctx.fillStyle = '#9a7048'; ctx.fillRect(px, by, bw, bh);
+    ctx.fillStyle = C.parch; ctx.fillRect(px + 1, by + 1, bw - 2, bh - 2);
+    ctx.fillStyle = '#c8a878'; ctx.fillRect(px + 8, by + bh - 7, bw - 16, 1);          // signing line
+    ctx.fillStyle = C.dbrown;
+    for (var q = 0; q < r.sig.length; q++) if (r.sig[q]) ctx.fillRect(px + (q % bw), by + Math.floor(q / bw), 1, 1);
+    if (r.saved) return;
+    var ty = by + bh + 3;
+    button('CLEAR', px + pw - 108, ty, 52, 11, false, function () { r.sig.fill(0); });
+    button('SAVE', px + pw - 52, ty, 52, 11, false, function () {
+      if (!r.sig.some(function (v) { return v; })) return;
+      var oc = document.createElement('canvas'); oc.width = bw; oc.height = bh;
+      var ox = oc.getContext('2d'); ox.fillStyle = C.dbrown;
+      for (var n = 0; n < r.sig.length; n++) if (r.sig[n]) ox.fillRect(n % bw, Math.floor(n / bw), 1, 1);
+      hall.push({ sig: oc.toDataURL('image/png'), date: r.date, clock: r.clock, t: r.t, secs: r.secs, deaths: r.deaths, levels: r.levels,
+                  ace: r.ace, eggs: r.eggs, score: r.score, clears: r.clears, dev: r.dev });
+      hall = hall.slice(-20); save('sma.hall', hall); r.saved = true; sigBox = null;
+    });
+  }
+  function sigPlot(x0, y0, x1, y1) {           // Bresenham line in logical pixels, 1 px pen
+    var r = report, b = sigBox; if (!r || !b) return;
+    var dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx + dy;
+    for (var n = 0; n < 2000; n++) {
+      var px = x0 - b.x, py = y0 - b.y;
+      if (px >= 1 && py >= 1 && px < b.w - 1 && py < b.h - 1) r.sig[py * b.w + px] = 1;
+      if (x0 === x1 && y0 === y1) break;
+      var e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
   }
 
   // ------------------------------------------------------------------ options tab
@@ -1028,6 +1089,21 @@
     if (inMap(p[0], p[1])) { toggleZoom(); draw(); }
   });
   cv.addEventListener('pointercancel', function () { down = null; mapDrag = null; optDrag = null; });
+  // signing the ending card: strokes in the page's logical pixels, so they look like the game's
+  function logical(e) { var p = pos(e); return [Math.floor(p[0]), Math.floor(p[1])]; }
+  cv.addEventListener('pointerdown', function (e) {
+    var p = logical(e), b = sigBox;
+    if (report && b && p[0] >= b.x && p[0] < b.x + b.w && p[1] >= b.y && p[1] < b.y + b.h) {
+      drawing = { id: e.pointerId, x: p[0], y: p[1] }; sigPlot(p[0], p[1], p[0], p[1]);
+      try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+      e.stopImmediatePropagation(); draw();
+    }
+  }, true);
+  cv.addEventListener('pointermove', function (e) {
+    if (!drawing || e.pointerId !== drawing.id) return;
+    var p = logical(e); sigPlot(drawing.x, drawing.y, p[0], p[1]); drawing.x = p[0]; drawing.y = p[1]; draw();
+  });
+  ['pointerup', 'pointercancel'].forEach(function (ev) { cv.addEventListener(ev, function () { drawing = null; }); });
 
   resize();
   setInterval(poll, 100);

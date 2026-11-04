@@ -45,7 +45,8 @@
   S.menuCursor = function (m) { return u8(m, 'got', 0x03001A63); };      // pause / game-over menu: 0 CONTINUE ... 3 TRY AGAIN
   S.level = function (m) { return u8(m, 'file', 0x03001160); };
   S.lives = function (m) { return u8(m, 'file', 0x03001161); };
-  S.score = function (m) { return u16(m, 'file', 0x0300114C) + u16(m, 'file', 0x0300114E) * 65536; };
+  // the file holds the score / 10; the HUD adds the last 0 (raw 108863 shows as 1088630)
+  S.score = function (m) { return (u16(m, 'file', 0x0300114C) + u16(m, 'file', 0x0300114E) * 65536) * 10; };
   S.aceBits = function (m) { var a = []; for (var i = 0; i < 13; i++) a.push(u8(m, 'file', 0x03001150 + i)); return a; };
   // level L owns bits L*5 .. L*5+4, LSB first from 03001150 (read at 0803182C, ORed in at 080347D8)
   S.aceSaved = function (m, L) { var b = S.aceBits(m), v = 0; for (var i = 0; i < 5; i++) { var k = L * 5 + i; v |= ((b[k >> 3] >> (k & 7)) & 1) << i; } return v; };

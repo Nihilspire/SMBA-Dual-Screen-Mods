@@ -18,6 +18,7 @@ public class SceneDump {
         System.arraycopy(d, OAM, s, Scene3D.OAM, 0x400);
         System.arraycopy(d, EW, s, Scene3D.LVL, Scene3D.LVL_LEN);
         System.arraycopy(d, IW + (Scene3D.VARS_ADDR & 0x7FFF), s, Scene3D.VARS, Scene3D.VARS_LEN);
+        System.arraycopy(d, EW + (Scene3D.SKY_ADDR & 0x3FFFF), s, Scene3D.SKY_TAB, Scene3D.SKY_LEN);
         return s;
     }
     public static void main(String[] a) throws Exception {

@@ -173,6 +173,7 @@
       act('STOPWATCH', 'stopwatch', 'watch');
       act('4 CHERRIES', 'cherries', 'cherry');
       act('+5 LIVES', 'lives', 'oneup');
+      act('ENDING CARD ON/OFF', 'report');
       opt('WARP LEVEL', LV[warpTo], function (d) { warpTo = (warpTo + (d < 0 ? 19 : 1)) % 20; });
       rows.push({ label: 'WARP', value: 'GO', fn: function () { toast(H0.dev('warp:' + warpTo)); } });
       opt('SET PLAY TIME', (devTime / 60 | 0) + ':' + ('0' + devTime % 60).slice(-2), function (d) {

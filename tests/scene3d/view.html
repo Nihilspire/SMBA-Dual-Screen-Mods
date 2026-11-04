@@ -58,7 +58,7 @@ window.show = function (b64, preset) {
   const U = n => gl.getUniformLocation(pg, n);
   gl.uniform1i(U('uTex'), 0); gl.uniform1i(U('uCave'), 1); gl.uniform1i(U('uMask'), 2);
   const r = ((sky >> 16) & 255) / 255, g = ((sky >> 8) & 255) / 255, b = (sky & 255) / 255;
-  gl.uniform3f(U('uBg'), r, g, b); gl.uniform4f(U('uGround'), ((ground >> 16) & 255) / 255, ((ground >> 8) & 255) / 255, (ground & 255) / 255, ground < 0 ? 0 : 1); gl.uniform1i(U('uEdge'), 1);
+  gl.uniform3f(U('uBg'), r, g, b); gl.uniform4f(U('uGround'), ((ground >> 16) & 255) / 255, ((ground >> 8) & 255) / 255, (ground & 255) / 255, ground < 0 ? 0 : 1);
   gl.uniform1f(U('uLightOn'), la / 100 * (window.LIGHT ? 1 : 0)); gl.uniform2f(U('uLight'), lx / 100, ly / 100);
   const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
   [['aPos', 3, 0], ['aUv', 2, 12], ['aShade', 1, 20], ['aKind', 1, 24]].forEach(([n, s, off]) => {

@@ -25,8 +25,8 @@ import java.util.HashMap;
  */
 final class Scene3D {
     // snapshot layout
-    static final int IO = 0, PAL = 0x60, VRAM = 0x460, OAM = 0x18460, LVL = 0x18860, LVL_LEN = 0x12C0, VARS = 0x19B20,
-            VARS_ADDR = 0x03001100, VARS_LEN = 0x1400, SNAP = VARS + VARS_LEN;
+    static final int IO = 0, PAL = 0x60, VRAM = 0x460, OAM = 0x18460, LVL = 0x18860, LVL_LEN = 0x14A0, VARS = 0x19D00,
+            VARS_ADDR = 0x03001100, VARS_LEN = 0x1400, SKY_TAB = VARS + VARS_LEN, SKY_ADDR = 0x02002B20, SKY_LEN = 32, SNAP = SKY_TAB + SKY_LEN;
     static final int W = 240, H = 160;
     static final int ATLAS_W = 512, ATLAS_H = 512, SLOTS = (ATLAS_W / 8) * (ATLAS_H / 8);
     static final int BD_W = 512, BD_H = 512;
@@ -214,11 +214,26 @@ final class Scene3D {
         if (idx * 2 + 1 >= LVL_LEN) return -1;
         return u16(f, LVL + idx * 2);
     }
+    /** meta, and past the area's edges what runs on there (0.29), so the far cameras don't show the world ending in mid-air:
+     *  solid ground and water go on in every direction, hill bodies downwards. Pits stay open. */
+    private int metaOut(byte[] f, int wx, int wy, int aw, int ah, int ws) {
+        int t = meta(f, wx, wy);
+        if (wx >= areaX0 && wy >= 0 && wx < aw && wy < ah) return t;
+        t = meta(f, Math.max(areaX0, Math.min(aw - 1, wx)), Math.max(0, Math.min(ah - 1, wy)));
+        if (t < 0) return -1;
+        int sh = shapeOf(t, ws);
+        if (sh == SH_WATER || (sh == SH_NONE && t >> 8 == 2 && t != 0x202)) return t;
+        return wy >= ah && wx >= areaX0 && wx < aw && t >= 0x060 && t <= 0x062 ? t : -1;
+    }
     private final int[] q = new int[4];
     private boolean quad(int id) {
         byte[] r = rom;
         if (r == null || !BezelTheme.quad(r, id, q)) return false;
         Gba.retile(id, quadMode, q);
+        if (subspace) {         // the game draws Subspace mirrored: each metatile's left and right tiles swap and flip
+            int a = q[0]; q[0] = q[1] ^ 0x400; q[1] = a ^ 0x400;
+            a = q[2]; q[2] = q[3] ^ 0x400; q[3] = a ^ 0x400;
+        }
         return true;
     }
     /** How the game redraws the wall metatiles 0x26E..0x2C5 this frame (see Gba.retile). */
@@ -265,19 +280,23 @@ final class Scene3D {
     private void view(byte[] f) {
         frameNo++;
         quadMode = Gba.quadMode(var16(f, Gba.TILESET), var(f, Gba.TILE_FLAG_A), var(f, Gba.TILE_FLAG_B));
-        pages = Math.min(10, var(f, Gba.PAGES) + 1);
+        // 0.29: Subspace is 3D too (it fell back to the flat picture): one more page after the area's last, in every kind of
+        // area laid out like a horizontal page, with only BG0 and the HUD on.
+        subspace = var(f, Gba.MAIN_STATE) == Gba.STATE_SUBSPACE;
+        pages = Math.min(10, var(f, Gba.PAGES) + 1) + (subspace ? 1 : 0);
+        areaX0 = subspace ? (pages - 1) * 256 : 0;
         int px = var16(f, Gba.PLAYER_X), py = var16(f, Gba.PLAYER_Y);
         Bg b = bg[0];
-        boolean flag = var(f, Gba.IS_VERTICAL) != 0;
+        boolean flag = !subspace && var(f, Gba.IS_VERTICAL) != 0;
         int best = -1, bx = b.hofs, by = b.vofs; boolean bv = flag;
-        boolean play = rom != null && var(f, Gba.MODE) == 3 && var(f, Gba.SUB_MODE) == 1 && var(f, Gba.MAIN_STATE) == 1;
+        boolean play = rom != null && var(f, Gba.MODE) == 3 && var(f, Gba.SUB_MODE) == 1 && (var(f, Gba.MAIN_STATE) == 1 || subspace);
         long bestDist = Long.MAX_VALUE;
-        if (play) for (int v = 0; v < 2; v++) {
+        if (play) for (int v = 0; v < (subspace ? 1 : 2); v++) {
             vertical = v == 0 ? flag : !flag;
             // every wrap of the scroll inside the area (the player's position can't be trusted: falling into a pit, dying)
             int maxX = vertical ? 256 : pages * 256, maxY = vertical ? pages * 240 : 240;
             for (int cx = b.hofs % b.w - b.w; cx < maxX; cx += b.w) {
-                if (cx + W <= 0) continue;
+                if (cx + W <= areaX0) continue;
                 for (int cy = b.vofs % b.h - b.h; cy < maxY; cy += b.h) {
                     if (cy + H <= 0) continue;
                     int sc = score(f, cx, cy);
@@ -295,6 +314,10 @@ final class Scene3D {
     }
     /** Last match score, 0..1000 (for tests). */
     int quality;
+    private boolean subspace;
+    private int areaX0;
+    // BG0's colour effect when it covers the whole screen (Subspace darkens BG0 by 8/16; with a window it only applies inside)
+    private int bgDark, bgLight;
 
     // ------------------------------------------------------------------ atlas (rebuilt from what's on screen)
     private final HashMap<Long, Integer> slots = new HashMap<Long, Integer>();
@@ -318,6 +341,11 @@ final class Scene3D {
             int v = o < VRAM + 0x18000 ? (u8(f[o]) >> ((x & 1) * 4)) & 15 : 0;
             int k = ((ay + y) * ATLAS_W + ax + x) * 4;
             int col = bgr(f, (obj ? 256 : 0) + pal * 16 + v);
+            if (!obj && (bgDark | bgLight) != 0) {
+                int cr = col >> 16 & 255, cg = col >> 8 & 255, cb2 = col & 255;
+                cr += ((bgLight != 0 ? 255 - cr : -cr) * (bgLight + bgDark)) / 16; cg += ((bgLight != 0 ? 255 - cg : -cg) * (bgLight + bgDark)) / 16; cb2 += ((bgLight != 0 ? 255 - cb2 : -cb2) * (bgLight + bgDark)) / 16;
+                col = cr << 16 | cg << 8 | cb2;
+            }
             atlas[k] = (byte) (col >> 16); atlas[k + 1] = (byte) (col >> 8); atlas[k + 2] = (byte) col;
             atlas[k + 3] = (byte) (v != 0 ? 255 : 0);
         }
@@ -341,7 +369,147 @@ final class Scene3D {
         }
     }
 
+    // ------------------------------------------------------------------ what the camera sees (0.29)
+    // The terrain was built for the screen + 32 px and the far layers for the screen alone, so FAR and DIORAMA showed the
+    // level as a slab cut off in mid-air against an empty sky. setCamera works out how far past each screen edge the view
+    // reaches, at the blocks and at the far plane; build fills exactly that. Each frame, as the camera eases between presets.
+    static final float VIEW_SLACK = 12, VIEW_MAX = 208;
+    private float marL = 32, marR = 32, marT = 32, marB = 32, bdL = 0, bdR = 0, bdT = 0, bdB = 0;
+    /** Same camera as Renderer3D.mvp. Returns the distance to the z = 0 plane. */
+    float setCamera(int w, int h, float pitch, float yaw, float zoom) {
+        double tanY = Math.tan(Math.toRadians(16)), asp = w / (double) h, tanX = tanY * asp;
+        double dist = Math.max(80, 120 / asp) / zoom / tanY + depth, p = Math.toRadians(pitch), y = Math.toRadians(yaw);
+        double ex = dist * Math.sin(y) * Math.cos(p), ey = dist * Math.sin(p), ez = dist * Math.cos(y) * Math.cos(p);   // from (120, -80, 0)
+        double fl = Math.sqrt(ex * ex + ey * ey + ez * ez), fx = -ex / fl, fy = -ey / fl, fz = -ez / fl;
+        double rl = Math.sqrt(fz * fz + fx * fx), rx = -fz / rl, rz = fx / rl;                                          // right = f x up
+        double ux = -rz * fy, uy = rz * fx - rx * fz, uz = rx * fy;                                                     // up = r x f
+        float[] nearBack = new float[4], plane = new float[4];
+        Arrays.fill(nearBack, Float.NaN); Arrays.fill(plane, Float.NaN);
+        float zPlane = -depth * 3 - 48, sc = (float) ((dist - zPlane) / dist);
+        for (int sx = -1; sx <= 1; sx += 2) for (int sy = -1; sy <= 1; sy += 2) {
+            double dx = fx + rx * sx * tanX + ux * sy * tanY, dy = fy + uy * sy * tanY, dz = fz + rz * sx * tanX + uz * sy * tanY;
+            for (float z : new float[] { -depth / 2f, depth * 2f }) {       // the blocks' back plane, and hills that come forward
+                double t = (z - ez) / dz;
+                reach(nearBack, (float) (ex + t * dx), (float) (ey + t * dy));
+            }
+            double t = (zPlane - ez) / dz;
+            reach(plane, (float) (ex + t * dx) / sc, (float) (ey + t * dy) / sc);
+        }
+        marL = viewMargin(-nearBack[0] - 120); marR = viewMargin(nearBack[1] - 120); marB = viewMargin(-nearBack[2] - 80); marT = viewMargin(nearBack[3] - 80);
+        bdL = viewMargin(-plane[0] - 120) + 16; bdR = viewMargin(plane[1] - 120) + 16; bdB = viewMargin(-plane[2] - 80) + 16; bdT = viewMargin(plane[3] - 80) + 16;
+        return (float) dist;
+    }
+    private static void reach(float[] b, float x, float y) {   // min x, max x, min y, max y
+        if (Float.isNaN(b[0]) || x < b[0]) b[0] = x;
+        if (Float.isNaN(b[1]) || x > b[1]) b[1] = x;
+        if (Float.isNaN(b[2]) || y < b[2]) b[2] = y;
+        if (Float.isNaN(b[3]) || y > b[3]) b[3] = y;
+    }
+    private static float viewMargin(float v) { return Math.max(0, Math.min(VIEW_MAX, v + VIEW_SLACK)); }
+
+    // ------------------------------------------------------------------ sky (0.29)
+    // Levels with a sky have no sky picture: the game rewrites palette colour 0 down the screen from a 16-colour table it
+    // keeps at 02002B20 (copied from the ROM, 2F2BFE day / 2F2C1E night / 2F2C5E 1-1's clouds), and the 3D view only saw
+    // what colour 0 ends the frame as: white, or navy in 2-1. SKY_START is the screen row each entry starts on, read off the
+    // 2D picture (4-1, 2-1, 1-1). Caves leave the table at 0; the last entry is colour 0 whenever the effect runs.
+    private static final int[] SKY_START = { 0, 8, 16, 24, 32, 38, 44, 50, 56, 64, 68, 72, 76, 80, 84, 87 };
+    private final int[] skyRow = new int[H];
+    private boolean readSky(byte[] f) {
+        int first = u16(f, SKY_TAB);
+        boolean flat = true;
+        for (int i = 2; i < SKY_LEN; i += 2) if (u16(f, SKY_TAB + i) != first) flat = false;
+        if (flat || u16(f, SKY_TAB + SKY_LEN - 2) != u16(f, PAL)) return false;
+        for (int e = 0; e < 16; e++) {
+            int c = u16(f, SKY_TAB + e * 2), r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31, rgb = (r << 3 | r >> 2) << 16 | (g << 3 | g >> 2) << 8 | (b << 3 | b >> 2);
+            for (int y = SKY_START[e]; y < (e < 15 ? SKY_START[e + 1] : H); y++) skyRow[y] = rgb;
+        }
+        return true;
+    }
+
     // ------------------------------------------------------------------ backdrop and HUD layers
+    // The far layers' maps are good well past the screen (0.29): up and down 28 rows (past that, leftovers of other screens,
+    // 7-1's status bar), and across every column the game has written since the area began. It streams columns in as the
+    // camera moves, so the ones ahead hold what was there before: the fill entries 00A0 / 00A1, or a menu's tiles. farSeen
+    // remembers which have been on screen or just past it (the game writes 24 px ahead), and the rest take the column one
+    // 256 px period over. That is only a fair guess: the layers have no real period (measured over maps the camera has
+    // passed whole). It is fine for dense scenery, where a seam hardly shows; a sparse layer (the clouds) shows it as shapes
+    // cut off, so it just fades out past its last known column instead. In vertical areas the rows stream instead and each
+    // row holds a screen's width: only the screen's rows are used, and columns repeat every 240 px.
+    private final long[] farSeen = new long[4];
+    private int farKey = -1;
+    private final int[] farPal = new int[256];
+    private void markSeen(int li) {
+        Bg l = bg[li];
+        if (l.w != 512 || !mapped) { farSeen[li] = -1L; return; }
+        for (int k = l.hofs >> 3; k <= (l.hofs + W - 1 + (vertical ? 0 : 16)) >> 3; k++) farSeen[li] |= 1L << (k & 63);
+    }
+    /** A sparse layer whose unknown columns stay empty: BG2 in a horizontal area, unless it fills the screen (7-1's sky). */
+    private boolean farSparse(byte[] f, Bg l, int li) {
+        if (li != 2 || !mapped || vertical) return false;
+        int n = 0, full = 0;
+        for (int sy = 4; sy < H; sy += 16) for (int sx = 4; sx < W; sx += 16) {
+            n++;
+            if (!emptyBgTile(f, l.cb, entry(f, l, l.hofs + sx, l.vofs + sy) & 0x3FF)) full++;
+        }
+        return full * 10 < n * 9;
+    }
+    private boolean colSeen(Bg l, int li, int tx) { return (farSeen[li] >>> (tx & ((l.w >> 3) - 1)) & 1) != 0; }
+    private int farCol(Bg l, int li, int tx, boolean sparse) {
+        int n = l.w >> 3, c = tx & (n - 1);
+        if ((farSeen[li] >>> c & 1) != 0) return c;
+        if (sparse) return -1;
+        boolean ahead = tx >= (l.hofs >> 3);
+        int o = (ahead ? c - (vertical ? 30 : 32) : c + (vertical ? 30 : 32)) & (n - 1);
+        if ((farSeen[li] >>> o & 1) != 0) return o;
+        o = (ahead ? c - 30 : c + 30) & (n - 1);       // only one screen's columns known yet (just came through a door)
+        return (farSeen[li] >>> o & 1) != 0 ? o : -1;
+    }
+    /** The map row for a layer tile row, unwrapped; -1 for none. Past the bottom the last 4 rows repeat (more would repeat
+     *  6-1's band of grass); above the top, the first 8 if the layer reaches row 0 in this column (a cave's rock), otherwise
+     *  there is only sky. */
+    private int farRow(byte[] f, Bg l, int ty, int col) {
+        if (!mapped || vertical) return ty & ((l.h >> 3) - 1);
+        int last = Math.max(27, (l.vofs + H - 1) >> 3);
+        if (ty > last) return last - 3 + (ty - last - 1) % 4;
+        if (ty >= 0) return ty;
+        return emptyBgTile(f, l.cb, entry(f, l, col * 8, 0) & 0x3FF) ? -1 : ((ty % 8) + 8) % 8;
+    }
+    /** Draws a far layer over the backdrop, inside the rectangle xa..xb, ya..yb (backdrop texels, screen at ox, oy). */
+    private void farLayer(byte[] f, Bg l, int li, int ox, int oy, int xa, int xb, int ya, int yb) {
+        if (!l.on) return;
+        boolean sparse = farSparse(f, l, li);
+        for (int ty = fdiv(ya - oy + l.vofs, 8); ty * 8 - l.vofs + oy < yb; ty++) for (int tx = fdiv(xa - ox + l.hofs, 8); tx * 8 - l.hofs + ox < xb; tx++) {
+            int col = farCol(l, li, tx, sparse), row = col < 0 ? -1 : farRow(f, l, ty, col);
+            if (row < 0) continue;
+            int e = entry(f, l, col * 8, row * 8), p = (e >> 12) * 16, base = VRAM + l.cb * 0x4000 + (e & 0x3FF) * 32;
+            if (base + 32 > VRAM + 0x10000) continue;
+            int dx = tx * 8 - l.hofs + ox, dy = ty * 8 - l.vofs + oy;
+            boolean off = dx + 8 <= ox || dx >= ox + W || dy + 8 <= oy || dy >= oy + H;
+            if (off && (e == 0x00A0 || e == 0x00A1)) continue;     // never written
+            // a sparse layer off the screen: px to its last known column, each side, for the fade out
+            int toR = 99, toL = 99;
+            if (sparse && dx >= ox + W) { if (!colSeen(l, li, tx + 1)) toR = 8; else if (!colSeen(l, li, tx + 2)) toR = 16; }
+            if (sparse && dx + 8 <= ox) { if (!colSeen(l, li, tx - 1)) toL = 1; else if (!colSeen(l, li, tx - 2)) toL = 9; }
+            for (int j = 0; j < 8; j++) {
+                int y = dy + j, sj = (e & 0x800) != 0 ? 7 - j : j;
+                if (y < ya || y >= yb) continue;
+                for (int i = 0; i < 8; i++) {
+                    int x = dx + i, si = (e & 0x400) != 0 ? 7 - i : i;
+                    if (x < xa || x >= xb) continue;
+                    int v = (u8(f[base + sj * 4 + (si >> 1)]) >> ((si & 1) * 4)) & 15;
+                    if (v == 0) continue;
+                    int c = farPal[p + v], k = (y * BD_W + x) * 4, d = Math.min(toR - i, toL + i);
+                    if (d < 16) {        // over what is under it; alpha too, so it ends as that exactly
+                        if (backdrop[k + 3] == 0) continue;
+                        for (int b = 0; b < 3; b++) { int u = backdrop[k + b] & 255, w = (c >> (16 - b * 8)) & 255; backdrop[k + b] = (byte) (u + (w - u) * d / 16); }
+                        backdrop[k + 3] = (byte) ((backdrop[k + 3] & 255) + (255 - (backdrop[k + 3] & 255)) * d / 16);
+                        continue;
+                    }
+                    backdrop[k] = (byte) (c >> 16); backdrop[k + 1] = (byte) (c >> 8); backdrop[k + 2] = (byte) c; backdrop[k + 3] = (byte) 255;
+                }
+            }
+        }
+    }
     /** Draws a BG layer (at its own scroll) into out; only rows ya..yb and columns xa..xb are filled. */
     private void drawLayer(byte[] f, Bg b, byte[] out, int ow, int oh, int x0, int y0, boolean clear, int xa, int xb, int ya, int yb) {
         if (clear) Arrays.fill(out, (byte) 0);
@@ -399,13 +567,16 @@ final class Scene3D {
             if (lab.length < w * h) { lab = new int[w * h]; d = new int[w * h]; }
             if (v.length < (w + 1) * (h + 1)) v = new float[(w + 1) * (h + 1)];
             Arrays.fill(lab, 0, w * h, 0);
+            Arrays.fill(v, 0, (w + 1) * (h + 1), 0f);
         }
         private int nb(int i, int j) { return lab[j] == lab[i] ? d[j] : 0; }
-        void solve(float r) {
+        void solve(float r) { solve(r, 0, 0, h - 1, w - 1); }
+        /** Over the rows y0..y1 and columns x0..x1 that hold labels (the rest stays 0: clouds are small, the grid isn't). */
+        void solve(float r, int y0, int x0, int y1, int x1) {
             this.r = r;
             final int INF = 1 << 20;
-            for (int i = 0; i < w * h; i++) d[i] = lab[i] == 0 ? 0 : INF;
-            for (int py = 0; py < h; py++) for (int px = 0; px < w; px++) {
+            for (int py = y0; py <= y1; py++) for (int px = x0; px <= x1; px++) { int i = py * w + px; d[i] = lab[i] == 0 ? 0 : INF; }
+            for (int py = y0; py <= y1; py++) for (int px = x0; px <= x1; px++) {
                 int i = py * w + px, e = d[i];
                 if (e == 0) continue;
                 if (px > 0) e = Math.min(e, nb(i, i - 1) + 3);
@@ -416,7 +587,7 @@ final class Scene3D {
                 }
                 d[i] = e;
             }
-            for (int py = h - 1; py >= 0; py--) for (int px = w - 1; px >= 0; px--) {
+            for (int py = y1; py >= y0; py--) for (int px = x1; px >= x0; px--) {
                 int i = py * w + px, e = d[i];
                 if (e == 0) continue;
                 if (px < w - 1) e = Math.min(e, nb(i, i + 1) + 3);
@@ -427,7 +598,7 @@ final class Scene3D {
                 }
                 d[i] = e;
             }
-            for (int vy = 0; vy <= h; vy++) for (int vx = 0; vx <= w; vx++) {
+            for (int vy = y0; vy <= y1 + 1; vy++) for (int vx = x0; vx <= x1 + 1; vx++) {
                 float s = 0; int n = 0, l = -1; boolean edge = false;
                 for (int j = vy - 1; j <= vy; j++) for (int i = vx - 1; i <= vx; i++) {
                     if (i < 0 || j < 0 || i >= w || j >= h) continue;
@@ -482,16 +653,17 @@ final class Scene3D {
     private void pillow(byte[] f, int[][] cls, int[][] ent, boolean[][] cut, int rows, int cols) {
         int w = cols * 8, h = rows * 8;
         cloudF.size(w, h);
-        for (int py = 0; py < h; py++) for (int px = 0; px < w; px++) {
-            int r = (py >> 3) + 1, c = (px >> 3) + 1, e = ent[r][c];
-            if (cls[r][c] == BLOCK && cut[r][c] && e >= 0) {
-                int tx = px & 7, ty = py & 7;
-                if ((e & 0x400) != 0) tx = 7 - tx;
-                if ((e & 0x800) != 0) ty = 7 - ty;
-                if (bgPixel(f, bg[0].cb, e & 0x3FF, tx, ty) != 0) cloudF.lab[py * w + px] = 1;
+        int y0 = h, x0 = w, y1 = -1, x1 = -1;
+        for (int r = 1; r <= rows; r++) for (int c = 1; c <= cols; c++) {
+            int e = ent[r][c];
+            if (cls[r][c] != BLOCK || !cut[r][c] || e < 0) continue;
+            y0 = Math.min(y0, (r - 1) * 8); y1 = Math.max(y1, r * 8 - 1); x0 = Math.min(x0, (c - 1) * 8); x1 = Math.max(x1, c * 8 - 1);
+            for (int ty = 0; ty < 8; ty++) for (int tx = 0; tx < 8; tx++) {
+                int sx = (e & 0x400) != 0 ? 7 - tx : tx, sy = (e & 0x800) != 0 ? 7 - ty : ty;
+                if (bgPixel(f, bg[0].cb, e & 0x3FF, sx, sy) != 0) cloudF.lab[((r - 1) * 8 + ty) * w + (c - 1) * 8 + tx] = 1;
             }
         }
-        cloudF.solve(PILLOW_R);
+        if (y1 >= 0) cloudF.solve(PILLOW_R, y0, x0, y1, x1);
     }
     /** One 8x8 cloud cell as pillow surfaces, in 2 px steps; (gx, gy) = its pixel in the grid. */
     private void pillowCell(int gx, int gy, float x0, float y0, float zm, float hz, float ua, float ub, float va, float vb) {
@@ -512,35 +684,42 @@ final class Scene3D {
         }
     }
 
-    // Hills (1-1, 3-1, 5-1 ...) keep their flat fronts but round off where they end: a quarter round HILL_R px wide
-    // (and as deep, at most HILL_RZ of the block depth) along every edge of a hill's front, from a field over the hill
-    // cells labelled by how far forward they sit, so a hill stepping in front of another rounds where they meet too.
+    // Hills (1-1, 3-1, 5-1 ...) and natural ground keep their flat fronts but round off where they end: a quarter round
+    // HILL_R px wide (and as deep, at most HILL_RZ of the block depth) along every edge of the front that is exposed, the
+    // same test as the side faces. 0.29 works it out from the neighbouring cells: a field over the hill cells (0.26) cost
+    // a pass over every pixel of the grid each frame, which the far cameras' bigger grid would have made heavy.
     static final float HILL_R = 5f, HILL_RZ = 0.3f;
-    private final Field hillF = new Field();
-    private void hillField(int[][] cls, boolean[][] hil, int[][] nst, int rows, int cols) {
-        int w = cols * 8, h = rows * 8;
-        hillF.size(w, h);
-        for (int r = 1; r <= rows; r++) for (int c = 1; c <= cols; c++) if (cls[r][c] == BLOCK && hil[r][c]) {
-            int l = 1 + nst[r][c];
-            for (int py = (r - 1) * 8; py < r * 8; py++) Arrays.fill(hillF.lab, py * w + (c - 1) * 8, py * w + c * 8, l);
-        }
-        hillF.solve(HILL_R);
+    private static final int E_L = 1, E_R = 2, E_T = 4, E_B = 8, E_TL = 16, E_TR = 32, E_BL = 64, E_BR = 128;
+    /** Ground and rock (not bricks, jars, ice ...): the grass-topped ground, its edges, sand, world 3-5's rock. */
+    private static boolean natural(int t) {
+        return t == 0x24A || t == 0x231 || (t >= 0x20B && t <= 0x20E) || (t >= 0x26E && t <= 0x28A);
     }
-    /** Front of one hill cell at zt, dipping by rz toward its edges; one flat quad when no edge is near. */
-    private void hillFront(int gx, int gy, float x0, float y0, float zt, float rz, float ua, float ub, float va, float vb) {
-        Field p = hillF;
-        boolean flat = true;
-        for (int j = 0; j <= 8 && flat; j += 2) for (int i = 0; i <= 8; i += 2) if (p.at(gx + i, gy + j) < 1) { flat = false; break; }
-        if (flat) { quad(x0, y0 - 8, zt, x0 + 8, y0 - 8, zt, x0 + 8, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, 0); return; }
-        for (int sy = 0; sy < 8; sy += 2) for (int sx = 0; sx < 8; sx += 2) {
-            int[] lx = { sx, sx + 2, sx + 2, sx }, ly = { sy + 2, sy + 2, sy, sy };
-            for (int k = 0; k < 4; k++) {
-                int vx = gx + lx[k], vy = gy + ly[k];
-                corner(k, x0 + lx[k], y0 - ly[k], zt - rz * (1 - p.at(vx, vy)),
-                       ua + (ub - ua) * lx[k] / 8f, va + (vb - va) * ly[k] / 8f, p.shade(vx, vy, rz, false));
-            }
+    /** 0..1 at (i, j) px in a cell: 0 on an exposed edge, 1 from HILL_R in. Outer corners round; inner ones too. */
+    private static float edgeProfile(int fl, float i, float j) {
+        i = Math.max(0, Math.min(8, i)); j = Math.max(0, Math.min(8, j));
+        float R = HILL_R, x = Math.min((fl & E_L) != 0 ? i : R, (fl & E_R) != 0 ? 8 - i : R), y = Math.min((fl & E_T) != 0 ? j : R, (fl & E_B) != 0 ? 8 - j : R), d;
+        if (x < R && y < R) d = Math.max(0, R - (float) Math.sqrt((R - x) * (R - x) + (R - y) * (R - y)));
+        else d = Math.min(x, y);
+        if ((fl & E_TL) != 0) d = Math.min(d, (float) Math.sqrt(i * i + j * j));
+        if ((fl & E_TR) != 0) d = Math.min(d, (float) Math.sqrt((8 - i) * (8 - i) + j * j));
+        if ((fl & E_BL) != 0) d = Math.min(d, (float) Math.sqrt(i * i + (8 - j) * (8 - j)));
+        if ((fl & E_BR) != 0) d = Math.min(d, (float) Math.sqrt((8 - i) * (8 - i) + (8 - j) * (8 - j)));
+        float t = 1 - d / R;
+        return (float) Math.sqrt(Math.max(0, 1 - t * t));
+    }
+    /** Front of one cell at zt, dipping by rz toward its exposed edges (flags fl), in 2 px steps across them. */
+    private void roundFront(int fl, float x0, float y0, float zt, float rz, float ua, float ub, float va, float vb) {
+        int stepX = (fl & (E_L | E_R | 0xF0)) != 0 ? 2 : 8, stepY = (fl & (E_T | E_B | 0xF0)) != 0 ? 2 : 8;
+        for (int sy = 0; sy < 8; sy += stepY) for (int sx = 0; sx < 8; sx += stepX) {
+            int rx = sx + stepX, by = sy + stepY;
+            roundCorner(0, fl, sx, by, x0, y0, zt, rz, ua, ub, va, vb); roundCorner(1, fl, rx, by, x0, y0, zt, rz, ua, ub, va, vb);
+            roundCorner(2, fl, rx, sy, x0, y0, zt, rz, ua, ub, va, vb); roundCorner(3, fl, sx, sy, x0, y0, zt, rz, ua, ub, va, vb);
             emit(0, false);
         }
+    }
+    private void roundCorner(int k, int fl, int i, int j, float x0, float y0, float zt, float rz, float ua, float ub, float va, float vb) {
+        float dx = rz * (edgeProfile(fl, i + 1, j) - edgeProfile(fl, i - 1, j)) / 2, dy = rz * (edgeProfile(fl, i, j + 1) - edgeProfile(fl, i, j - 1)) / 2;
+        corner(k, x0 + i, y0 - j, zt - rz * (1 - edgeProfile(fl, i, j)), ua + (ub - ua) * i / 8f, va + (vb - va) * j / 8f, shadeN(-dx, dy, 1));
     }
 
     // Jars (21A-21F) are upright cylinders: half in front of the block's middle plane and half behind, radius 8 across
@@ -645,7 +824,9 @@ final class Scene3D {
     static final float WATER_BACK = 0.25f;   // front, as a fraction of the block depth behind the ground's front plane
     private void water(byte[] f, int[][] shp, int[][] cls, int[][] nst, boolean[][] hil, int[][] ent, int r, int c,
                        float x0, float y0, float zf, float zb, int D, float ua, float ub, float va, float vb) {
-        float x1 = x0 + 8, y1 = y0 - 8, zw = zf + nst[r][c] * D * HILL_STEP - WATER_BACK * D;
+        int id = meta(f, camX + Math.round(x0) + 4, camY - Math.round(y0) + 4);
+        boolean sand = id == 0x050 || id == 0x051;      // the desert's floor is walked in, not on: level with the sprites
+        float x1 = x0 + 8, y1 = y0 - 8, zw = zf + nst[r][c] * D * HILL_STEP - (sand ? 0 : WATER_BACK * D);
         quad(x0, y1, zw, x1, y1, zw, x1, y0, zw, x0, y0, zw, ua, vb, ub, vb, ub, va, ua, va, 1f, 2);
         float sa = (ua + ub) / 2, mv = (va + vb) / 2;
         if (shp[r][c - 1] != SH_WATER && blockFront(cls, nst, hil, r, c - 1, zf, D) < zw)
@@ -673,10 +854,12 @@ final class Scene3D {
     private static int shapeOf(int t, int ws) {
         if (t < 0) return SH_NONE;
         if (t >= 0x21A && t <= 0x21F) return SH_JAR;
+        if ((t == 0x205 || t == 0x206) && (ws == 1 || ws == 5)) return SH_JAR;     // the desert's cacti: round too, no lid
         if (t >= 0x220 && t <= 0x222) return ws == 1 || ws == 5 ? SH_BEVEL : SH_LOG;
         if (t == 0x104 || t == 0x117) return SH_BEVEL;
         if ((t == 0x004 || t == 0x005) && ws != 1 && ws != 5 && ws != 6) return SH_WATER;
         if ((t == 0x008 || t == 0x00A) && ws == 3) return SH_WATER;
+        if ((t == 0x050 || t == 0x051) && (ws == 1 || ws == 5)) return SH_WATER;    // the desert's floor (no collision: it's soft)
         if ((t >= 0x025 && t <= 0x02F) || (t >= 0x095 && t <= 0x09C) || (t >= 0x059 && t <= 0x05C)) return SH_CROSS;
         return SH_NONE;
     }
@@ -750,6 +933,9 @@ final class Scene3D {
         if (!mapped) propCache.clear();       // tile graphics change between areas
         slots.clear(); nextSlot = 0;
         nv = 0;
+        int bld = u16(f, IO + 0x50), bfx = (bld >> 6) & 3, evy = Math.min(16, u16(f, IO + 0x54) & 31);
+        boolean whole = mapped && (u16(f, IO) & 0xE000) == 0 && (bld & 1) != 0;
+        bgDark = whole && bfx == 3 ? evy : 0; bgLight = whole && bfx == 2 ? evy : 0;
         int D = depth;
         float zf = D / 2f, zb = -D / 2f;
         float backZ = back.equals("far") ? -D * 2.5f : zb - 0.01f;
@@ -769,31 +955,30 @@ final class Scene3D {
         // the screen's cells plus a margin of M cells all round (low / turned cameras see past the screen edges). Outside
         // the screen the BG map may not be streamed in yet, so margin cells take their tiles from the level data + ROM
         // quads (the same map entries the game would write), which is only possible while mapped.
-        final int M = mapped ? 4 : 0;
-        int tx0 = fdiv(b.hofs, 8) - M, ty0 = fdiv(b.vofs, 8) - M;
-        int cols = fdiv(b.hofs + W - 1, 8) + M - tx0 + 1, rows = fdiv(b.vofs + H - 1, 8) + M - ty0 + 1;
+        final int ML = mapped ? (int) Math.ceil(marL / 8) : 0, MR = mapped ? (int) Math.ceil(marR / 8) : 0, MT = mapped ? (int) Math.ceil(marT / 8) : 0, MB = mapped ? (int) Math.ceil(marB / 8) : 0;
+        int tx0 = fdiv(b.hofs, 8) - ML, ty0 = fdiv(b.vofs, 8) - MT;
+        int cols = fdiv(b.hofs + W - 1, 8) + MR - tx0 + 1, rows = fdiv(b.vofs + H - 1, 8) + MB - ty0 + 1;
         int[][] cls = new int[rows + 2][cols + 2], ent = new int[rows + 2][cols + 2], nst = new int[rows + 2][cols + 2];
-        boolean[][] hil = new boolean[rows + 2][cols + 2], cut = new boolean[rows + 2][cols + 2];
+        boolean[][] hil = new boolean[rows + 2][cols + 2], cut = new boolean[rows + 2][cols + 2], rnd = new boolean[rows + 2][cols + 2];
         int[][] shp = new int[rows + 2][cols + 2];
         int ws = mapped ? var16(f, 0x030019FC) : -1;       // world graphics set (RAM-MAP)
         int[][][] pyr = new int[rows + 2][cols + 2][];
         pyrMemo.clear();
         if (mapped) hills(f);
+        int aw = vertical ? 256 : pages * 256, ah = vertical ? pages * 240 : 240;
         for (int r = -1; r <= rows; r++) for (int c = -1; c <= cols; c++) {
             int sx = (tx0 + c) * 8 - b.hofs, sy = (ty0 + r) * 8 - b.vofs;
             boolean on = sx > -8 && sx < W && sy > -8 && sy < H;
+            int wx = camX + sx, wy = camY + sy, mt = mapped ? metaOut(f, wx + 4, wy + 4, aw, ah, ws) : -1;
             int e, k;
             if (on) e = entry(f, b, (tx0 + c) * 8, (ty0 + r) * 8);
-            else {
-                int wx = camX + sx, wy = camY + sy, t = meta(f, wx + 4, wy + 4);
-                e = t >= 0 && quad(t) ? q[((wy >> 3) & 1) * 2 + ((wx >> 3) & 1)] : -1;
-            }
+            else e = mt >= 0 && quad(mt) ? q[((wy >> 3) & 1) * 2 + ((wx >> 3) & 1)] : -1;
             if (e < 0 || !b.on) k = SKY;
             else {
                 boolean empty = emptyBgTile(f, b.cb, e & 0x3FF);
                 if (!mapped) k = empty ? SKY : BACK;
-                else { k = classOf(f, meta(f, camX + sx + 4, camY + sy + 4)); if (empty && k != BLOCK) k = SKY; }
-                if (mapped && k != SKY && k != BLOCK && pyrId(meta(f, camX + sx + 4, camY + sy + 4))) {
+                else { k = classOf(f, mt); if (empty && k != BLOCK) k = SKY; }
+                if (mapped && k != SKY && k != BLOCK && pyrId(mt)) {
                     int key = (camX + sx + 4) >> 4 << 8 | ((camY + sy + 4) >> 4 & 255);
                     int[] p = pyrMemo.get(key);
                     if (p == null && !pyrMemo.containsKey(key)) { p = pyramid(f, (camX + sx + 4) >> 4, (camY + sy + 4) >> 4); pyrMemo.put(key, p); }
@@ -801,10 +986,10 @@ final class Scene3D {
                 }
             }
             cls[r + 1][c + 1] = k; ent[r + 1][c + 1] = e;
-            nst[r + 1][c + 1] = mapped ? nestAt(camX + sx + 4, camY + sy + 4) : 0;
-            int mt = mapped ? meta(f, camX + sx + 4, camY + sy + 4) : -1;
+            nst[r + 1][c + 1] = mapped ? nestAt(Math.max(areaX0, Math.min(aw - 1, wx + 4)), Math.max(0, Math.min(ah - 1, wy + 4))) : 0;
             hil[r + 1][c + 1] = mt >= 0 && hill(mt);
             cut[r + 1][c + 1] = cloud(mt);
+            rnd[r + 1][c + 1] = mt >= 0 && (hill(mt) || natural(mt));
             int sh = mapped && k != SKY ? shapeOf(mt, ws) : SH_NONE;
             if (sh == SH_CROSS && k != PROP) sh = SH_NONE;
             if (sh == SH_WATER) cls[r + 1][c + 1] = PROP;      // not a block: its neighbours keep their side faces
@@ -848,7 +1033,6 @@ final class Scene3D {
         boolean clouds = false;
         for (int r = 1; r <= rows && !clouds; r++) for (int c = 1; c <= cols; c++) if (cut[r][c] && cls[r][c] == BLOCK) { clouds = true; break; }
         if (clouds) pillow(f, cls, ent, cut, rows, cols);
-        if (mapped) hillField(cls, hil, nst, rows, cols);
         for (int r = 0; r < rows; r++) for (int c = 0; c < cols; c++) {
             int k = cls[r + 1][c + 1];
             if (k == SKY) continue;
@@ -891,7 +1075,7 @@ final class Scene3D {
                 float z1 = jar ? zm : zt - rz, z2 = jar ? zm : zb + rz;
                 cylCell(jar, x0, y0, axis, z1, z2, rz, ua, ub, va, vb);
                 int mt = meta(f, wx + 4, wy + 4);
-                if (jar && shp[r][c + 1] != SH_JAR) cylCap(true, x0, y0, axis, z1, z2, rz, (ua + ub) / 2, va + (vb - va) * 0.2f, 0);
+                if (jar && mt >= 0x21A && shp[r][c + 1] != SH_JAR) cylCap(true, x0, y0, axis, z1, z2, rz, (ua + ub) / 2, va + (vb - va) * 0.2f, 0);
                 if (!jar && mt == 0x220 && (wx & 15) == 0) cylCap(false, x0, y0, axis, z1, z2, rz, ua + (ub - ua) * 0.3f, (va + vb) / 2, -1);
                 if (!jar && mt == 0x222 && (wx & 15) == 8) cylCap(false, x0, y0, axis, z1, z2, rz, ua + (ub - ua) * 0.7f, (va + vb) / 2, 1);
                 continue;
@@ -899,9 +1083,21 @@ final class Scene3D {
             // bevelled blocks and rounded hills bring their side faces in to where the front's edge now is
             float zs = zt;
             if (sh == SH_BEVEL) { bevelCell(x0, y0, zt, (wx & 15) == 0, (wy & 15) == 0, ua, ub, va, vb); zs = zt - BEVEL; }
-            else if (mapped && hil[r + 1][c + 1]) {
+            else if (mapped && rnd[r + 1][c + 1]) {
+                int R0 = r + 1, C0 = c + 1, fl = 0;
+                boolean eL = solidFront(cls, nst, hil, shp, R0, C0 - 1, zf, D) < zt, eR = solidFront(cls, nst, hil, shp, R0, C0 + 1, zf, D) < zt;
+                boolean eT = solidFront(cls, nst, hil, shp, R0 - 1, C0, zf, D) < zt, eB = solidFront(cls, nst, hil, shp, R0 + 1, C0, zf, D) < zt;
+                if (eL) fl |= E_L;
+                if (eR) fl |= E_R;
+                if (eT) fl |= E_T;
+                if (eB) fl |= E_B;
+                if (!eL && !eT && solidFront(cls, nst, hil, shp, R0 - 1, C0 - 1, zf, D) < zt) fl |= E_TL;
+                if (!eR && !eT && solidFront(cls, nst, hil, shp, R0 - 1, C0 + 1, zf, D) < zt) fl |= E_TR;
+                if (!eL && !eB && solidFront(cls, nst, hil, shp, R0 + 1, C0 - 1, zf, D) < zt) fl |= E_BL;
+                if (!eR && !eB && solidFront(cls, nst, hil, shp, R0 + 1, C0 + 1, zf, D) < zt) fl |= E_BR;
                 float rz = Math.min(HILL_R, (zt - zb) * HILL_RZ);
-                hillFront(c * 8, r * 8, x0, y0, zt, rz, ua, ub, va, vb);
+                if (fl == 0) quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, fk);
+                else roundFront(fl, x0, y0, zt, rz, ua, ub, va, vb);
                 zs = zt - rz;
             }
             else quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, fk);
@@ -921,59 +1117,108 @@ final class Scene3D {
         caveStart = nv; caveCount = 0;
         if (cave) {
             int ox = (BD_W - W) / 2, oy = (BD_H - H) / 2;
-            Bg[] far = hudTop ? new Bg[] { bg[2], bg[1] } : new Bg[] { bg[3], bg[2], bg[1] };
+            int[] far = hudTop ? new int[] { 2, 1 } : new int[] { 3, 2, 1 };
             for (int i = 1; i < far.length; i++)   // back first (higher priority number); ties keep BG3 back
-                for (int j = i; j > 0 && far[j].prio() > far[j - 1].prio(); j--) { Bg t = far[j]; far[j] = far[j - 1]; far[j - 1] = t; }
+                for (int j = i; j > 0 && bg[far[j]].prio() > bg[far[j - 1]].prio(); j--) { int t = far[j]; far[j] = far[j - 1]; far[j - 1] = t; }
+            int fk = (mapped ? 1 << 12 : 0) | (vertical ? 1 << 13 : 0) | (subspace ? 1 << 14 : 0) | var(f, Gba.CURRENT_LEVEL) << 4 | var(f, Gba.AREA_NO);
+            if (fk != farKey) { farKey = fk; Arrays.fill(farSeen, 0); }
+            for (int li : far) markSeen(li);
+            // as far as the camera sees, in steps so that a moving camera doesn't redraw every frame for a pixel
+            int xa = Math.max(0, ox - ((int) bdL + 15 & ~15)), xb = Math.min(BD_W, ox + W + ((int) bdR + 15 & ~15));
+            int ya = Math.max(0, oy - ((int) bdT + 15 & ~15)), yb = Math.min(BD_H, oy + H + ((int) bdB + 15 & ~15));
+            if (!mapped) { xa = ox; xb = ox + W; }
+            if (!mapped || vertical) { ya = oy; yb = oy + H; }
             long key = hudTop ? 0 : 17;
-            for (Bg l : far) key = key * 31 + layerKey(f, l);
+            for (int li : far) key = key * 31 + layerKey(f, bg[li]) + farSeen[li];
+            for (int i = 0; i < SKY_LEN; i++) key = key * 31 + f[SKY_TAB + i];
+            key = key * 31 + xa + (xb << 10) + ((long) ya << 20) + ((long) yb << 30);
             if (key != bdKey) {          // only when a far layer scrolled or changed
                 bdKey = key;
-                // rows near the screen only: further up/down the layers wrap into unrelated map data
-                // (and columns: games stream map columns in as the camera moves, so the rest of the map is stale)
-                int ya = oy, yb = oy + H, xa = ox, xb = ox + W;   // only what is on screen: the rest of the map is stale
-                drawLayer(f, far[0], backdrop, BD_W, BD_H, -ox, -oy, true, xa, xb, ya, yb);
-                byte[] tmp = scratch;
-                for (int l = 1; l < far.length; l++) {
-                    drawLayer(f, far[l], tmp, BD_W, BD_H, -ox, -oy, true, xa, xb, ya, yb);
-                    for (int y = ya; y < yb; y++) for (int i = y * BD_W + xa; i < y * BD_W + xb; i++) if (tmp[i * 4 + 3] != 0) System.arraycopy(tmp, i * 4, backdrop, i * 4, 4);
+                boolean grad = mapped && readSky(f);
+                if (grad) for (int y = 0; y < BD_H; y++) {   // alpha 128: sky, drawn as it is (the shader tints the far layers)
+                    int c = skyRow[Math.max(0, Math.min(H - 1, y - oy))], o = y * BD_W * 4;
+                    if (y > 0 && c == skyRow[Math.max(0, Math.min(H - 1, y - 1 - oy))]) { System.arraycopy(backdrop, o - BD_W * 4, backdrop, o, BD_W * 4); continue; }
+                    for (int i = o; i < o + BD_W * 4; i += 4) { backdrop[i] = (byte) (c >> 16); backdrop[i + 1] = (byte) (c >> 8); backdrop[i + 2] = (byte) c; backdrop[i + 3] = (byte) 128; }
                 }
+                else Arrays.fill(backdrop, (byte) 0);
+                for (int i = 0; i < 256; i++) farPal[i] = bgr(f, i);
+                for (int li : far) farLayer(f, bg[li], li, ox, oy, xa, xb, ya, yb);
                 // the sky as seen: the far layers' most common colour along the top of the screen when they cover it
                 // (7-1's palette colour 0 is black behind a light sky layer), else palette colour 0
                 java.util.HashMap<Integer, Integer> hist = new java.util.HashMap<Integer, Integer>();
                 int opaque = 0, samples = 0, top = -1, topN = 0;
-                for (int y = ya; y < ya + 32; y += 2) for (int x = xa; x < xb; x += 4) {   // top of the screen: where sky is
+                for (int y = oy; y < oy + 32; y += 2) for (int x = ox; x < ox + W; x += 4) {   // top of the screen: where sky is
                     int i = (y * BD_W + x) * 4; samples++;
-                    if (backdrop[i + 3] == 0) continue;
+                    if (backdrop[i + 3] != (byte) 255) continue;
                     opaque++;
                     int c = (backdrop[i] & 255) << 16 | (backdrop[i + 1] & 255) << 8 | (backdrop[i + 2] & 255);
                     Integer n = hist.get(c); int nn = n == null ? 1 : n + 1; hist.put(c, nn);
                     if (nn > topN) { topN = nn; top = c; }
                 }
                 bdSky = opaque * 2 > samples ? top : -1;
-                // fade the last 16 px toward the sky so the far layers don't end in a hard cut past the screen edges
-                int sky = bdSky >= 0 ? bdSky : bgr(f, 0), sr = sky >> 16 & 255, sg = sky >> 8 & 255, sbl = sky & 255;
-                for (int y = ya; y < yb; y++) for (int x = xa; x < xb; x++) {
-                    int dmin = Math.min(Math.min(x - xa, xb - 1 - x), Math.min(y - ya, yb - 1 - y));
-                    if (dmin >= 16) continue;
-                    int i = (y * BD_W + x) * 4; if (backdrop[i + 3] == 0) continue;
-                    float t = dmin / 16f;
-                    backdrop[i] = (byte) (sr + ((backdrop[i] & 255) - sr) * t);
-                    backdrop[i + 1] = (byte) (sg + ((backdrop[i + 1] & 255) - sg) * t);
-                    backdrop[i + 2] = (byte) (sbl + ((backdrop[i + 2] & 255) - sbl) * t);
+                // what lies under the far layers' last row, where it is mostly solid (2-1's dunes, a cave's rock): its mean
+                // colour, down to the texture's edge and on past it, so a turned camera doesn't look under the scenery
+                int below = -1;
+                if (mapped && !vertical && yb > oy + H) {
+                    int y = yb - 1, n = 0, sr = 0, sg = 0, sbl = 0;
+                    for (int x = ox; x < ox + W; x++) {
+                        int i = (y * BD_W + x) * 4;
+                        if (backdrop[i + 3] != (byte) 255) continue;
+                        n++; sr += backdrop[i] & 255; sg += backdrop[i + 1] & 255; sbl += backdrop[i + 2] & 255;
+                    }
+                    if (n * 2 > W) {
+                        below = (sr / n) << 16 | (sg / n) << 8 | (sbl / n);
+                        for (int i = yb * BD_W * 4; i < BD_W * BD_H * 4; i += 4) { backdrop[i] = (byte) (below >> 16); backdrop[i + 1] = (byte) (below >> 8); backdrop[i + 2] = (byte) below; backdrop[i + 3] = (byte) 255; }
+                    }
+                }
+                // fade the last 16 px so the far layers don't end in a hard cut: toward the sky at the top, what lies under
+                // them at the bottom, and at the sides toward the row's own mean colour, which runs on past the texture's
+                // edge (a turned camera sees further than the texture reaches). Alpha goes with it where it ends in sky.
+                int sky = bdSky >= 0 ? bdSky : bgr(f, 0);
+                for (int y = ya; y < yb; y++) {
+                    boolean edgeRow = y - ya < 16 || yb - 1 - y < 16;
+                    int rs = grad ? skyRow[Math.max(0, Math.min(H - 1, y - oy))] : sky, mn = 0, mr = 0, mg = 0, mb = 0;
+                    if (mapped) for (int i = (y * BD_W + xa) * 4; i < (y * BD_W + xb) * 4; i += 4) {
+                        if (backdrop[i + 3] == 0) continue;
+                        mn++; mr += backdrop[i] & 255; mg += backdrop[i + 1] & 255; mb += backdrop[i + 2] & 255;
+                    }
+                    int rm = rs;
+                    if (mn * 2 > xb - xa) {
+                        rm = (mr / mn) << 16 | (mg / mn) << 8 | (mb / mn);
+                        for (int x = 0; x < BD_W; x = x == xa - 1 ? xb : x + 1) {
+                            if (x >= xa && x < xb) { x = xb - 1; continue; }
+                            int i = (y * BD_W + x) * 4;
+                            backdrop[i] = (byte) (rm >> 16); backdrop[i + 1] = (byte) (rm >> 8); backdrop[i + 2] = (byte) rm; backdrop[i + 3] = (byte) 128;
+                        }
+                    }
+                    for (int x = xa; x < xb; x++) {
+                        if (!edgeRow && x == xa + 16) x = Math.max(x, xb - 16);
+                        int dx = Math.min(x - xa, xb - 1 - x), dy = Math.min(y - ya, yb - 1 - y), dmin = Math.min(dx, dy);
+                        if (dmin >= 16) continue;
+                        int i = (y * BD_W + x) * 4; if (backdrop[i + 3] != (byte) 255) continue;
+                        boolean toBelow = below >= 0 && dy < dx && yb - 1 - y < 16;
+                        int rc = toBelow ? below : dx <= dy ? rm : rs, sr = rc >> 16 & 255, sg = rc >> 8 & 255, sbl = rc & 255;
+                        float t = dmin / 16f;
+                        backdrop[i] = (byte) (sr + ((backdrop[i] & 255) - sr) * t);
+                        backdrop[i + 1] = (byte) (sg + ((backdrop[i + 1] & 255) - sg) * t);
+                        backdrop[i + 2] = (byte) (sbl + ((backdrop[i + 2] & 255) - sbl) * t);
+                        if (grad && !toBelow) backdrop[i + 3] = (byte) (128 + 127 * t);
+                    }
                 }
                 bdChanged = true;
             }
             if (bdSky >= 0) skyRgb = bdSky;
             float z = -D * 3 - 48, sc = (camDist - z) / camDist;
-            // a texel = one screen pixel seen from the camera: plane extent = BD size * sc, centred on the screen
-            float cx = W / 2f, cy = -H / 2f, hw = BD_W / 2f * sc, hh = BD_H / 2f * sc;
-            quad(cx - hw, cy - hh, z, cx + hw, cy - hh, z, cx + hw, cy + hh, z, cx - hw, cy + hh, z, 0, 1, 1, 1, 1, 0, 0, 0, 1, 3);
+            // a texel = one screen pixel seen from the camera: extent = BD size * sc, centred on the screen. The quad runs on
+            // past the texture (its edge rows and columns clamp, and there it is only sky), for the turned cameras.
+            float cx = W / 2f, cy = -H / 2f, hw = BD_W / 2f * sc * 3, hh = BD_H / 2f * sc * 3;
+            quad(cx - hw, cy - hh, z, cx + hw, cy - hh, z, cx + hw, cy + hh, z, cx - hw, cy + hh, z, -1, 2, 2, 2, 2, -1, -1, -1, 1, 3);
             caveCount = nv - caveStart;
         }
         // 0.21: the sky eases to its new colour instead of jumping. Taken from whatever far layer covers the top of the
         // screen, it flipped every few frames as the camera moved (5-3's cave between black, brown and olive rock, 5-1
         // between the clouds and the bushes), and the whole space round the level flashed. A new area or screen snaps.
-        int sk = (mapped ? 1 << 12 : 0) | var(f, Gba.CURRENT_LEVEL) << 4 | var(f, Gba.AREA_NO);
+        int sk = (mapped ? 1 << 12 : 0) | (subspace ? 1 << 13 : 0) | var(f, Gba.CURRENT_LEVEL) << 4 | var(f, Gba.AREA_NO);
         int tr = skyRgb >> 16 & 255, tg = skyRgb >> 8 & 255, tb = skyRgb & 255;
         if (sk != skyKey) { skyKey = sk; skyR = tr; skyG = tg; skyB = tb; }
         else { skyR += (tr - skyR) * 0.08f; skyG += (tg - skyG) * 0.08f; skyB += (tb - skyB) * 0.08f; }
@@ -1018,7 +1263,6 @@ final class Scene3D {
         }
         atlasChanged = true;
     }
-    private final byte[] scratch = new byte[BD_W * BD_H * 4];
     private int bdSky = -1, skyKey = -1;
     private float skyR, skyG, skyB;
     private long bdKey = 1, hudKey = 1;

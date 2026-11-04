@@ -77,6 +77,9 @@ final class Gba {
     static int maxHearts() { return Math.min(4, 2 + Native.peek(MUSHROOMS)); }
     static boolean inLevel() { return Native.peek(MODE) == 3 && Native.peek(SUB_MODE) == 1; }
     static boolean inGame() { return inLevel() && Native.peek(MAIN_STATE) == 1; }
+    /** In a level with the game running: playing, or in Subspace (main state 0x0A). */
+    static final int STATE_SUBSPACE = 0x0A;
+    static boolean inPlay3d() { int s = Native.peek(MAIN_STATE); return inLevel() && (s == 1 || s == STATE_SUBSPACE); }
     static boolean inGameOrPause() { return inLevel(); }
     static boolean charSelect() { return Native.peek(MODE) == 3 && Native.peek(SUB_MODE) == 0 && Native.peek(MAIN_STATE) == 1; }
     /** The 5 Ace Coin bits the file holds for level L. */

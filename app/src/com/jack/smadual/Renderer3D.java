@@ -46,7 +46,7 @@ final class Renderer3D implements GLSurfaceView.Renderer {
     /** True while the last drawn frame was the flat picture. */
     volatile boolean flat = true;
 
-    private int prog, aPos, aUv, aShade, aKind, uMvp, uTex, uCave, uBg, uEdge, uLight, uLightOn, uMode, uMask, uGround;
+    private int prog, aPos, aUv, aShade, aKind, uMvp, uTex, uCave, uBg, uLight, uLightOn, uMode, uMask, uGround;
     private int atlasTex, caveTex, maskTex, hudTex, picTex, vbo;
     private int W = 1, H = 1;
     private float pitch = 16, yaw = 0, zoom = 1, camDist = 400;
@@ -61,27 +61,26 @@ final class Renderer3D implements GLSurfaceView.Renderer {
     static final String FS =
         "precision highp float;\n" +
         "varying vec2 vUv; varying float vShade; varying float vKind; varying vec3 vWorld;\n" +
-        "uniform sampler2D uTex; uniform sampler2D uCave; uniform sampler2D uMask; uniform vec3 uBg; uniform int uEdge;\n" +
+        "uniform sampler2D uTex; uniform sampler2D uCave; uniform sampler2D uMask; uniform vec3 uBg;\n" +
         "uniform vec2 uLight; uniform float uLightOn; uniform int uMode; uniform vec4 uGround;\n" +
         "void main(){\n" +
-        "  if (uMode == 1) {\n" +                                   // backdrop: the area's scenery, faded toward the sky
+        "  if (uMode == 1) {\n" +                                   // backdrop: alpha 1 scenery, faded toward the sky; 0.5 the sky itself
         "    vec4 b = texture2D(uCave, vUv);\n" +
-        "    if (b.a < 0.5) discard;\n" +
-        "    gl_FragColor = vec4(mix(uBg, b.rgb, 0.85), 1.0); return;\n" +
+        "    if (b.a < 0.25) discard;\n" +
+        "    gl_FragColor = vec4(mix(uBg, b.rgb, 1.15 - 0.3 * b.a), 1.0); return;\n" +
         "  }\n" +
         "  if (vKind > 5.5) { gl_FragColor = vec4(vec3(vKind > 6.5 ? 0.0 : 1.0), vShade); return; }\n" +   // window brighten / darken
         "  vec4 c = texture2D(uTex, vUv);\n" +
         "  if (uMode == 2) { if (c.a < 0.5) discard; gl_FragColor = vec4(c.rgb, 1.0); return; }\n" +
         "  if (c.a < 0.5) { if (vKind < 0.5) c = vec4(uBg * 0.8, 1.0); else discard; }\n" +
-        "  if (vKind > 3.5 && vKind < 4.5) { float l = dot(c.rgb, vec3(0.3, 0.59, 0.11)); if (l < 0.5) c.rgb = mix(vec3(1.0, 0.74, 0.87), vec3(1.0), l * 1.6); }\n" +   // pillow cloud: its black checker in pink
-
-        "  if (vKind > 4.5 && texture2D(uMask, vec2((vWorld.x + 0.5) / 256.0, (-vWorld.y + 0.5) / 256.0)).r > 0.5) discard;\n" +
         "  float shade = vShade;\n" +
-        "  shade *= mix(1.0, mix(1.15, 0.35, smoothstep(24.0, 160.0, distance(vWorld.xy, uLight))), uLightOn);\n" +
-        "  if (uEdge == 1) {\n" +
-        "    float dx = max(max(-32.0 - vWorld.x, vWorld.x - 272.0), 0.0), dy = max(max(vWorld.y - 32.0, -192.0 - vWorld.y), 0.0);\n" +
-        "    if (max(dx, dy) > 0.0) discard;\n" +
+        "  if (vKind > 3.5 && vKind < 4.5) {\n" +                   // pillow cloud: only white and pink, the black checker and the shadows pink
+        "    float l = dot(c.rgb, vec3(0.3, 0.59, 0.11));\n" +
+        "    if (l < 0.5) c.rgb = mix(vec3(1.0, 0.74, 0.87), vec3(1.0), l * 1.6);\n" +
+        "    c.rgb = mix(vec3(0.98, 0.72, 0.85), c.rgb, clamp((shade - 0.4) / 0.5, 0.0, 1.0)); shade = 1.0;\n" +
         "  }\n" +
+        "  if (vKind > 4.5 && texture2D(uMask, vec2((vWorld.x + 0.5) / 256.0, (-vWorld.y + 0.5) / 256.0)).r > 0.5) discard;\n" +
+        "  shade *= mix(1.0, mix(1.15, 0.35, smoothstep(24.0, 160.0, distance(vWorld.xy, uLight))), uLightOn);\n" +
         "  gl_FragColor = vec4(c.rgb * shade, 1.0);\n" +
         "}";
 
@@ -94,7 +93,7 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         aShade = GLES20.glGetAttribLocation(prog, "aShade"); aKind = GLES20.glGetAttribLocation(prog, "aKind");
         uMvp = GLES20.glGetUniformLocation(prog, "uMvp"); uTex = GLES20.glGetUniformLocation(prog, "uTex");
         uCave = GLES20.glGetUniformLocation(prog, "uCave"); uBg = GLES20.glGetUniformLocation(prog, "uBg");
-        uEdge = GLES20.glGetUniformLocation(prog, "uEdge"); uLight = GLES20.glGetUniformLocation(prog, "uLight");
+        uLight = GLES20.glGetUniformLocation(prog, "uLight");
         uLightOn = GLES20.glGetUniformLocation(prog, "uLightOn"); uMode = GLES20.glGetUniformLocation(prog, "uMode");
         uMask = GLES20.glGetUniformLocation(prog, "uMask"); uGround = GLES20.glGetUniformLocation(prog, "uGround");
         int[] t = new int[4];
@@ -195,7 +194,7 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         }
         // 3D only once the game has been in play for a few frames and the level data matches the screen
         boolean want3d = playing && playRun >= 8;
-        if (want3d) scene.build(current, camDist);
+        if (want3d) { scene.setCamera(W, H, pitch, yaw, zoom); scene.build(current, camDist); }
         if (!want3d || !scene.mapped) { drawFlat(newPic); return; }
         flat = false;
         float[] pr = preset(camPreset);
@@ -256,7 +255,6 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         GLES20.glUniform3f(uBg, br, bg, bb);
         int gr = s.groundRgb;
         GLES20.glUniform4f(uGround, ((gr >> 16) & 255) / 255f, ((gr >> 8) & 255) / 255f, (gr & 255) / 255f, gr < 0 ? 0 : 1);
-        GLES20.glUniform1i(uEdge, 1);
         GLES20.glUniform1f(uLightOn, s.light ? s.lightAmt : 0);
         GLES20.glUniform2f(uLight, s.lightX, s.lightY);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, atlasTex); GLES20.glUniform1i(uTex, 0);

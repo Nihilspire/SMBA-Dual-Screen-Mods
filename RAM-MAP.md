@@ -94,7 +94,7 @@ Each was checked by poking `19B0`/`1991`/`1992` from a 7-1 state and watching th
 | Address | Meaning |
 |---|---|
 | `03001140`–`03001167` | the file, 40 bytes |
-| `0300114C` | score, u32 *(Data Crystal; HUD agrees)* |
+| `0300114C` | score / 10, u32; the HUD adds the last 0 (108863 here shows as 1088630) *(Data Crystal)* |
 | `03001150`–`0300115C` | Ace Coins collected: 100 bits, **level L owns bits L·5 … L·5+4**, LSB first (read at `0803182C`, ORed in from `03001C35` at `080347D8`). The pause screen's "A = n%" is the number of set bits |
 | `0300115D`–`0300115F` | levels cleared on this file: bit L (code at `080317D2` / `08031544`) |
 | `03001160` | current level 0–19 = 1-1 … 7-2. Poked at character select (after the file block is unpacked, a few frames in) it changes the level that starts; poked in a level it is undone at the next character select |
@@ -163,7 +163,9 @@ with the mushroom flags); they last through area changes, deaths and save states
 
 | Address | Meaning |
 |---|---|
-| `02000000` | the whole current area decoded, **u16 metatile ids**, pages of 15 rows × 16 columns like SMB2's `$6000`: page p, row r, column c at index `p·240 + r·16 + c`. Horizontal areas: page = x>>8, row = y>>4. Vertical areas: rows run on (index = row·16 + column). Pulling grass writes `0x22` (sky) into its cell. |
+| `02000000` | the whole current area decoded, **u16 metatile ids**, pages of 15 rows × 16 columns like SMB2's `$6000`: page p, row r, column c at index `p·240 + r·16 + c`. Horizontal areas: page = x>>8, row = y>>4. Vertical areas: rows run on (index = row·16 + column). Pulling grass writes `0x22` (sky) into its cell. Subspace is one more page after the area's last, in every kind of area (`03001A06` + 1 = the area's pages, so a level buffer holds up to 11); BG0 draws it mirrored (each metatile's left and right tiles swap and flip), darkened by BLDCNT `00C1` / BLDY 8, with main state `03001992` = `0A` |
+| `02002B20` | **the sky**: 16 u16 colours (0.29), a copy of a ROM table: `2F2BFE` day, `2F2C1E` 2-1's night, `2F2C5E` 1-1's clouds. The game rewrites palette colour 0 from it down the screen, so colour 0 itself only ever reads as the last entry at the end of a frame. Entries start on screen rows 0, 8, 16, 24, 32, 38, 44, 50, 56, 64, 68, 72, 76, 80, 84, 87 (read off the 2D picture; fixed to the screen, not the camera). All 0 in caves and 7-1, where a far layer covers everything; while the effect runs the last entry equals colour 0 |
+| far-layer maps (BG1 / BG2) | hold 28 good rows (past that, leftovers of other screens). Columns stream in about 24 px ahead of the scroll; ones never written hold `00A0` / `00A1` or a menu's tiles. No fixed period (measured over maps the camera has passed whole), and the rows aren't stored raw in ROM or RAM |
 
 Metatile id = (group << 8) | index. **The group is the collision class** (tested in the emulator for every id: Mario
 standing on a floor made of it): group 0 = no collision, group 1 = stand on top / jump through (clouds, hill tops,
