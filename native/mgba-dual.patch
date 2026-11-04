@@ -132,3 +132,27 @@ index aa01fdc..25e40db 100644
  	struct GBA* gba = (struct GBA*) cpu->master;
  	struct GBAMemory* memory = &gba->memory;
  	int wait = 0;
+diff --git a/src/gba/dma.c b/src/gba/dma.c
+index 106bd7653..b836a1723 100644
+--- a/src/gba/dma.c
++++ b/src/gba/dma.c
+@@ -32,6 +32,8 @@ static const uint32_t DMA_DST_MASK[] = {
+ 	0x0FFFFFFE,
+ };
+ 
++extern int gbx_overclock;
++
+ void GBADMAInit(struct GBA* gba) {
+ 	gba->memory.dmaEvent.name = "GBA DMA";
+ 	gba->memory.dmaEvent.callback = _dmaEvent;
+@@ -140,7 +142,9 @@ uint16_t GBADMAWriteCNT_HI(struct GBA* gba, int dma, uint16_t control) {
+ 
+ 		if (GBADMARegisterGetTiming(currentDma->reg) == GBA_DMA_TIMING_NOW) {
+ 			currentDma->nextCount = currentDma->count;
+-			currentDma->when = mTimingCurrentTime(&gba->timing) + 3; // DMAs take 3 cycles to start
++			/* Dual: with NO SLOWDOWN's halved instruction cycles, 3 cycles lets the next instructions run first, and a late DMA can overwrite what they
++			 * just wrote. Start before the next instruction. */
++			currentDma->when = mTimingCurrentTime(&gba->timing) + (gbx_overclock ? 1 : 3); // DMAs take 3 cycles to start
+ 			GBADMAUpdate(gba);
+ 		}
+ 	}

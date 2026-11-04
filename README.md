@@ -282,6 +282,8 @@ HUD (the file holds the score / 10).
   wall to where sprites walk.
 - Build time per frame is about half of 0.27's at TILT and LOW and still below it at FAR and DIORAMA (desktop, same frames).
 
+**0.30:** NO SLOWDOWN and DMA. mGBA starts a DMA 3 cycles after it's requested, and with instruction cycles halved the next instructions can run first, so a late DMA can overwrite what they just wrote. It broke Metroid Fusion's intro (a late memory clear wiped a pointer). No scene in this game was seen to break: over a walk from a new game and nine saved spots the overclocked picture is identical before and after. It's a precaution: a DMA now starts before the next instruction while the overclock is on (`native/mgba-dual.patch`, `src/gba/dma.c`).
+
 ## Build
 ```
 bash tools/setup_toolchain.sh      # bionic headers + stub libs + compiler-rt builtins, android.jar, mGBA @ 7a12d6d + patch
