@@ -16,6 +16,8 @@ NES core swapped for a GBA one.
 - **Battery save:** the game's own EEPROM save is kept in the app's files (`game.sav`) and written when you pause,
   quit or leave the app.
 - **RAM / ROM map:** see [RAM-MAP.md](RAM-MAP.md).
+- **Super Mario Advance Link** is the second APK: the Link screen on its own, reading the game in RetroArch over its network commands, with a 3D tab only
+  it has. See [linkapp/README.md](linkapp/README.md).
 
 ## Screens
 | Setup | What happens |
@@ -284,10 +286,97 @@ HUD (the file holds the score / 10).
 
 **0.30:** NO SLOWDOWN and DMA. mGBA starts a DMA 3 cycles after it's requested, and with instruction cycles halved the next instructions can run first, so a late DMA can overwrite what they just wrote. It broke Metroid Fusion's intro (a late memory clear wiped a pointer). No scene in this game was seen to break: over a walk from a new game and nine saved spots the overclocked picture is identical before and after. It's a precaution: a DMA now starts before the next instruction while the overclock is on (`native/mgba-dual.patch`, `src/gba/dma.c`).
 
+**0.31:** the second screen's windows are the game's own. They were flat cream cards with a brown line over a backdrop washed
+out with white, close to the game's pause panel but not it. Now every card is the real panel from the first-start capture
+(scalloped edge, corner pins, as the pause menu uses) over the title screen's full-colour backdrop, and content keeps inside
+the scallops. The words follow the panel too: each letter one solid colour (`G.solid`: the font's second tone was drawn darker,
+which the game's windows never do), the panel's deep orange for labels and its darkest for values, its plain orange for big
+titles, instead of red, blue and green labels. Labels stay a step darker than the game's own orange (`ef9452`, about 2:1 on the
+panel) so small print reads. An empty cherry, Ace Coin or egg slot is now the real icon, dimmed, not a tan silhouette. On a narrow
+chart the Ace Coins are five pips instead of a count that read as part of the level ("1-15"). Without a capture yet, the drawn
+card stays, in the same place.
+
+**0.32:** the ending card is for signing with a finger. The title is gone and the stats fold into a small block: the date, two
+columns (time, levels, deaths, Ace Coins, score, warps) and one row of characters, so the field is 216 x 88 on the Thor's lower
+screen instead of 216 x 35 (25 with dev codes on). WARPS is new: the levels skipped with a warp jar, which is why LEVELS can end under 20. The pen is 2 px
+instead of 1, and it reads every touch sample (`getCoalescedEvents`), eases them and joins them with curves, so a fingertip's wobble
+doesn't show. A stroke can start just outside the field, a second touch is ignored while one is going, and CLEAR and SAVE are half
+the field wide and 18 px tall (they were 52 x 11) and still press if the finger rolls a little.
+
+**0.33:** the ending card's character row shows the characters themselves, each beside its clear count with MVP above the count.
+The sprites come from the ROM (`S.CHAR_SHEET`, RAM-MAP.md "Player sprites"), so all four are there even if you never played one.
+The Thor's lower screen and other short layouts use the game's small frames, which takes the field from 216 x 88 to 216 x 74; tall
+layouts use the big frames. Without the ROM yet the row falls back to each character's initial on a coloured badge.
+
+**0.34:** two things.
+- While the game is on its own menus (the title, Choose a Game, the file screens) the second screen goes quiet: the game's logo,
+  dimmed and centred on black, as Xenogears Dual does in cutscenes, instead of "NO MAP HERE". The logo comes from the ROM. Tapping it
+  opens OPTIONS for the save states, and any other tab goes back to the logo.
+- The insides of pots in 3D. A pot's BG1 is one picture with black all round it, lying under BG0's outline of the pot, but it was
+  treated as far scenery: on a far plane, so the black slid in behind the walls from any turned camera, and repeated past its edges,
+  so other screens' tiles and black stripes showed around the pot. Now it's the pot's back wall, right behind the outline with no
+  parallax, with plain black outside. The walls' sides are tan instead of grey. Pots that use the extra page weren't 3D at all (they
+  fell back to the flat view): that page is always page 10, not the one after the area's last, which only held in areas of 10 pages,
+  and only Subspace is mirrored. That also fixes Subspace in shorter areas, and the map, which said "NO MAP HERE" in those pots.
+
+**0.35:** two things.
+- Vertical areas are laid out right from their first frame. The map showed their pages side by side until the camera first moved down,
+  because the game's flag stays clear until then and the first page reads the same either way. The area's object list in the ROM says
+  which way it runs (objects are placed in world tiles), so the map and the 3D view now go by that (RAM-MAP.md).
+- The chart shows who cleared a level with that character's own sprite, head and shoulders, instead of a coloured line, and the
+  legend is gone. The coins moved under the level's number to make the room.
+- Ladders in 3D. A ladder you can stand on (`115`, `116`) was a block because of its collision, and one hanging under a block (`03E`,
+  `03F`) counted as part of that block's body, the rule for hills and houses. Either way it became a solid slab, out of line with the
+  ladder above it, with its gaps filled in dark green (the colour of the rails' outline). All of them now stay see-through.
+
+**0.36:** the app has its own icon: the owner's Toad and DUAL set from Pixel Icon Lab (`app/res/mipmap-*/smba_dual*`), with adaptive layers
+and a themed monochrome layer on Android 8 and up, and plain and round PNGs below that.
+
+**0.37:** the map has the game's own background behind the level instead of one flat colour: the far layers and the sky gradient, read
+from video memory, or a pot's picture. The layers scroll slower than the level, so they have no one place in the area: they tile at the
+level's scale, using columns that have been on screen, as the 3D view does, so the picture fills in as you go. Subspace has no far layers
+on and keeps its plain colour.
+
+**0.38:** solid tiles that are partly clear, in 3D. A block's clear pixels took the nearest colour, usually the dark outline, which is what made
+the ladders green in 0.35. An audit of every area of every level found 96 such tiles, and those not already rounded some other way now get
+a shape that fits them:
+- World 4's whales, half-height bars and platforms (`106`, `10C`, `10E`, `10F`), mushroom blocks (`214`), the boulder (`20A`) and the like have
+  their clear pixels cut out, with walls running back from the real outline, coloured from just inside it.
+- World 4's sand pillars (`208`, `209`) and world 7's columns (`242`, `243`) are round, like the jars and cacti. As boxes their clear sides filled with the dark outline.
+- A vine's top (`127`) and 7-2's chain (`105`) stay see-through and cross like the other vines. A vine under a block no longer joins the block.
+- The sea round a whale (`00C`, `011`, `016`, `017`) is water, not a stack of striped blocks.
+
+**0.39:** more of the same, from play.
+- Jars topped with `2C6` (the rows in 6-1, 5-2's) had a cube for a top: the jar's art is shared by `2C6`, `1F5` and `149`-`14E`, which now count as
+  jars. Upright round things have no back half any more: its outline showed through wherever the art is clear, as dark steps down one side.
+- The deserts' bones (`220`-`222`) and the log ends in pots (`113`) keep their real outline. The bones sat on a filled box, and the logs' rings ran
+  along their sides.
+- Clouds were holed along their tops where the art is clear, which only showed against a night sky (5-2's black squares).
+- On the map, a pot's picture follows the scroll instead of keeping its first position, which could be taken while the screen was changing over and
+  leave it a page off.
+
+**0.40:** who finished a level, on the chart. The game marks a level cleared as it leaves for Bonus Chance, but the tracker only took the name on the
+next level's first playing frame. So the level just finished showed a dash through Bonus Chance, the chart and character select, and for good if a
+state load, a resume from the auto state or a dev warp came before the next level. The tracker now takes the name as the level ends (`native/smatrack.c`).
+A level already missed gets its name from the file's own count per character, when only one character has clears the tracker can't place; if two do,
+it stays a dash.
+
+**0.41:** the dimmed logo on the second screen also covers character select and the screens from there into a level (the Yoshi Challenge's, the level's
+card, the level's first frames). Tapping it opens OPTIONS as on the menus, but here the other tabs work too, so the chart can still be read between
+levels; the tab you had comes back when the level starts. Doors and lost lives don't show it, and Bonus Chance keeps its own screen.
+
+**0.42:** that screen keeps the app's look, as Xenogears Link keeps its background: the sky backdrop and a scalloped window with the logo on it, the
+whole page dimmed to 40%, instead of the logo on black. No tabs on it, as Xenogears drops its bars there.
+
+**0.43 (alpha, with Super Mario Advance Link 0.1):** nothing changes in Dual. `Renderer3D` can hold its last frame instead of showing the 2D picture and its start
+delay is a setting (both for Link, both off here), and the Link page has what only Link uses behind `LINK` (the setup screen, the 3D tab and its options, RetroArch's
+state slots). The page in Dual is pixel for pixel 0.42's on every tab checked, and the native library is 0.42's, byte for byte. See [linkapp/README.md](linkapp/README.md).
+
 ## Build
 ```
 bash tools/setup_toolchain.sh      # bionic headers + stub libs + compiler-rt builtins, android.jar, mGBA @ 7a12d6d + patch
 bash tools/build_apk.sh            # -> out/Super Mario Advance Dual <ver>.apk
+bash tools/build_link_apk.sh       # -> out/Super Mario Advance Link <ver>.apk (no native code, no setup step)
 ```
 apt: clang lld llvm aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headless.
 `out/android/libsmadual.so` is included so the core doesn't have to be rebuilt. Keystore: `tools/smadual.keystore`
@@ -295,7 +384,7 @@ apt: clang lld llvm aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headl
 
 ## Test
 - `make -C native TARGET=host MGBA=... host` -> `out/host/drive rom script [savedir]`
-  (run/tap/shot/dump/save/load/peek/poke/rec/trace/rtrace/oc/lag/extract). `extract file` runs the first-start
+  (run/tap/shot/dump/save/load/peek/poke/rec/trace/rtrace/trk/trkreset/oc/lag/extract). `trk` prints the Dual tracker. `extract file` runs the first-start
   capture on a freshly loaded ROM (use an empty savedir). `dump` = IWRAM | EWRAM | IO | PAL | VRAM | OAM.
   `trace lo hi max file` logs every CPU write in a range with PC and LR; `rec N buttons file` appends IWRAM per frame.
 - `tests/linktest.py rom dump out [js]`: Link page in headless Chromium with a mock Native fed from a dump.
@@ -303,3 +392,6 @@ apt: clang lld llvm aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headl
   from `drive ... extract`; `standin` swaps every ROM piece (and the font) for plain stand-ins for preview images.
 - `tests/scene3d/`: `build.sh`, then `SceneDump rom dump out.s3d` and `shot.py out.png out.s3d [preset] [standin]`
   renders the 3D view with Renderer3D's own shaders in headless Chromium (WebGL).
+- `tests/ra/`, `tests/mock_ra.py`: Link's transport, tracker, kit and page; see [linkapp/README.md](linkapp/README.md).
+- `tests/showcase/`: the release pictures. `spots.py WORK` plays to each spot on the driver (flying along the top so the game really scrolls and spawns what's
+  there, characters poked in), `render3d.py WORK OUT` renders each in every camera and the 3D menu's options, `linkshots.py WORK OUT` Link's pictures with the game on top.

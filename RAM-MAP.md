@@ -55,6 +55,9 @@ and by recording IWRAM every frame through a pit death and the potion door:
 | `03001E01` | **character select cursor** = the character under it (0 Mario, 1 Peach, 2 Toad, 3 Luigi; Right steps 0 → 3 → 2 → 1, the screen's order). Poking it changes the name and stats shown |
 | `03001A63` | **pause / game-over menu cursor** (0 CONTINUE, 1 SAVE AND CONTINUE, 2 SAVE AND QUIT, 3 TRY AGAIN), followed Up/Down in a recording |
 
+**From character select into a level** (frame by frame, `1991`/`1992`): `00`/`00` 2 frames, `00`/`01` choosing, `00`/`02` 81 frames, on a Yoshi Challenge file `05`/`00`, `05`/`01` about 100 frames, `05`/`02`,
+then `00`/`05` 2 frames, `00`/`06` about 95 frames (the level's card), `01`/`00` 6 frames, `01`/`01`. A lost life goes `01`/`03` to `00`/`00` and on the same way.
+
 ## Mode 3 sub-modes and the ending (0.23)
 
 The main loop calls `[0833D5B4 + mode·4]` (mode 3 → `0800187C`), which calls `[0833D590 + sub·4]` with `1991`.
@@ -241,11 +244,118 @@ Loaded only when spawned (not in the capture): rocket (`400`/`404`, 32x16 ×2, p
 **0.11:** the Link screen takes these from live VRAM the first time OAM shows them (`rocket` 400+404 pal 3, `giantVeg`
 908 pal 4, `giantShy` 920 pal 1, `giantShyBlue` 920 pal 2; 2D mapping) and keeps them in localStorage (`sma.live.*`).
 
+### Player sprites (0.33)
+Each character has a sprite sheet in the ROM, uncompressed, in rows of 32 tiles (0x2000 bytes per character for the part below).
+It is what OBJ VRAM holds from tile 512 in a level, and OBJ palette 0 is the character's. Found by starting 1-1 as each character
+at character select and searching the ROM for the player's tiles (poking `03001C70` in a level doesn't reload them).
+
+| Character | Tile 512 at | OBJ palette 0 at |
+|---|---|---|
+| Mario | `2EAB5C` | `305A84` |
+| Luigi | `2ECB5C` | `305AA4` |
+| Peach | `2EEB5C` | `305AC4` |
+| Toad | `2F0B5C` | `305AE4` |
+
+Standing is OAM 4 above OAM 5, 16x16 each, 2D mapping, h-flipped when facing right: tiles `512` + `516` with 2 or more hearts,
+`576` + `580` with one. The small frames are 19 to 23 px tall, the big ones 27 to 32.
+
+## Title logo (0.34)
+
+The finished title screen's logo (Mario, Birdo, SUPER MARIO ADVANCE) is its BG1 (`9C86`: 8 bpp, char base 1, map at screenblock 28,
+256x512), which appears after the character parade, or at once if Start is pressed. All of it is raw in the ROM: tiles from `32DB10`
+(312, 64 bytes each), map rows 14-29 from `3380D0` (32 u16 per row), palette from `332B10` (the entries it uses match the live BG
+palette). The ink is 202x125, at (20, 2) in those 16 rows.
+
+## World 4's whales and pillars (0.38)
+
+Whales (4-2, graphics set 3): `24E`-`25A` for the edges, tail and spout, `10A` along the back, `03B` / `03C` for the body. Palette 1's colour 2, the
+outline, is dark green, and the purple runs up through colours 3-7. They sit in the sea on `00C`, with `016` / `017` / `011` where they meet it. Sand
+pillars (4-1, 4-2, 4-3): `208` top and `209` body, about 13 px wide with clear either side.
+
+## Ladders (0.35)
+
+Six metatiles draw the same two tiles (`94`, `95`, palette 2, clear between the rungs): `03E` and `03F` (group 0), `115` and `116` (group 1,
+stand on top; 3-2's ladders end in them at the floor), and `0B4` and `0B5` past the end of their table. Palette 2's colour 2, the outline
+of the rails and rungs, is dark green.
+
+## Which way an area runs (0.35)
+
+`0300116F` stays 0 when an area loads, and in a vertical area it only turns 1 once the camera has moved down (it held 0 through 150
+frames after loading in every area tried). At the top of a vertical area the screen can't tell either, as both readings of page 0 are
+the same. The object lists can: their tile coordinates are world tiles, so an object at row 15 or more means vertical and one at
+column 16 or more means horizontal. Of the 100 areas of more than one page none has both, and 3 have neither: 2-3 area 2, 3-1 area 2,
+4-3 area 4. A guess from whether the level data lines up across page seams was tried and read 1-1's first area wrongly.
+
+Any area can be loaded directly for testing: poke the level to `03001160`, the area to `030019FE` and 0 to `03001992`, then run about
+60 frames. The door's own route doesn't take pokes, since its state 2 rereads the destination from the area's table.
+
+## Inside a pot (0.34)
+
+There are two kinds, and `03001A29` tells them from everything else:
+
+| | Pot on the extra page | Pot that is its own area | Subspace | Otherwise |
+|---|---|---|---|---|
+| Main state `1992` | `0A` | `01` | `0A` | `01` |
+| `03001A29` | 1 | 2 | 0 | 0 |
+| `03001A2A` | 1 | 0 | 2 | 0 |
+| Subspace timer `03001CCF` | 0 | 0 | counting | 0 |
+| Page | 10 | 0 | 10 | |
+| Drawn mirrored | no | no | yes | no |
+
+Seen so far: a jar topped `21E` goes to the extra page and one topped `21A` to its own area (`21F` in 1-3 did nothing when entered this
+way). The extra page is always page 10, the level buffer's last, whatever `03001A06` says (0 in these pots). BG0 holds the pot's
+outline (metatiles `296`-`2B0`) and the blocks and is clear inside and out. BG1 is one picture, 32x28 tiles down to the floor: the pot's
+inside with black all round it, under the outline; the rest of its 512x256 map is other screens' tiles. BG2 is off. The camera sits
+at BG0 scroll (8, 64) and BG1 at (0, 64), so the neck is above the screen. Palette colour 0 is left over from outside on the extra page.
+
 ## Dual tracker (not in game RAM)
 
 Play time, deaths (lives dropping by one), levels cleared and by whom, levels skipped by a warp: kept in
 `native/smatrack.c` and written as a trailer (`"SMAT"` + 64 bytes) on every save state, so they travel with states.
 `Native.tracker()` returns the block (u32: time, deaths, cleared mask, who lo/hi (2 bits per level), warped mask, flags).
+
+**The end of a level, in the order it happens** (traced on 4-3's end and read from the code):
+
+| When | What the game does | Where |
+|---|---|---|
+| The mask at the end of an x-1 or x-2 level, or player state `0A` (handler `080ABB98`) with `+158` top bits `80` when its timer `030019BC` runs out | Sub-mode 1 → 2 (Bonus Chance), or 6 (egg screen) in the Yoshi Challenge; state 0. On the mask, that character's count at `03001148` goes up here | `0808DFD4` / `0808DF98`, `080ABE6C` / `080ABE30`; count `080B1398` |
+| Bonus Chance opens | Sets the level's cleared bit, saves the Ace Coins | `08031DC4`, `08034770` |
+| Bonus Chance ends | `03001160` + 1, sub-mode 2 → 0 (chart, then character select) | `080346B4` |
+| The Yoshi Challenge's other way out (seen on 4-1's mask with a beaten, 40-egg file) | Cleared bit and `03001160` + 1 in one go, sub-mode 1 → 0 | `080468A8` |
+
+The mask on an x-3 level doesn't end it (`0808E010`, read from the code; the object lists put a boss's room after it). Player state
+`03001C6F` indexes the handlers at `08367CEC`. `080AB05C(4)` is what starts state `0A`, adding to the count and setting the timer to 180;
+its callers look for metatile `038` (`08368954[4]`) and Up, but neither the tile nor the value poked set it off, so what shows it in play
+isn't known. The last step (state `0A`, timer at 1) was run by poking those bytes in 4-3's boss room, not by beating Fryguy.
+
+The tracker records the finisher at the first line (0.40), reading `03001C70`, which holds until the next character is chosen. It used
+to wait for the next level's first playing frame, with Bonus Chance, the chart and character select in between (about 8 s on 4-3's way
+out, with one spin and the screens pressed through).
+
+## RetroArch (Super Mario Advance Link)
+
+mGBA's libretro core maps IWRAM `03`, EWRAM `02`, IO `04` (0x400), palette `05`, VRAM `06`, OAM `07` and the ROM `08`-`0D` for RetroArch at their GBA addresses
+(`libretro.c` `_setupMaps`; the same commit as Dual's). `READ_CORE_MEMORY` reaches them all, including the write-only BG registers, since it reads the core's
+own copy of IO. An address outside them: `READ_CORE_MEMORY 9000000 -1 no descriptor for address`.
+
+`03001993` goes up by 1 every frame in play: Link times play with it. (`03001FD4`, `03002044`, `030020B4` did too in 4-2 only: object slots.)
+
+What changes from one frame to the next in play, over 240 frames of running and jumping in each of 1-1, 2-1 and 4-2, which sets what Link reads how often:
+
+| Where | How often it changes |
+|---|---|
+| VRAM `06000000`-`067FF` | Every frame, about 87 bytes: the BG tiles the game animates |
+| VRAM `06010000`-`107FF` | 30 of 239 frames, about 70 bytes: the player's frames |
+| OAM, the scroll registers, IWRAM | Most frames, a few bytes |
+| Palette | 0 to 37 of 239 frames |
+| BG maps (`0600D000`-`0600FFFF`) | 1 to 14 of 239 frames, per 2 KB: columns streamed in as the camera moves |
+| The rest of VRAM | Not at all, until a new area or the pause screen loads over it |
+
+So three reads hold all the game state the page and the 3D view use: `03001140`:0x40, `03001990`:0xD4, `03001C30`:0x7C0 (the player, then the object slots).
+
+The menu art Dual captures is all uncompressed in the ROM: the title's maps at `332D10` (BG0) and `3378D0` (BG2) and palette at `332B10`; the pause panel's OBJ tiles at `2FE424`+;
+item sprites at `2DBF5C` (a 2D sheet: rows are 0x400 apart), `2E6FDC`+, `2C41D0`+; OBJ palettes 1, 2, 4, 9 at `3BA6D0`, `3BA6F0`, `3BA730`, `3BA770`, 7 at `3BAA50`, 14 at
+`2F2CBC`. The full table of which piece goes where is `KitRom.T` in `linkapp`.
 
 ## Not mapped yet
 

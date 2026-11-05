@@ -11,13 +11,21 @@ public class SceneSeq {
         Scene3D s = new Scene3D();
         s.rom = Files.readAllBytes(Paths.get(a[0]));
         s.round = System.getenv("ROUND") != null;      // the ROUND SPRITES option
-        // CAM=low|tilt|diorama|far builds what that camera sees (as Renderer3D, at shot.py's 3:2); unset, the screen + 32 px
+        // and the 3D menu's others, for the showcase renders
+        if (System.getenv("DEPTH") != null) s.depth = Integer.parseInt(System.getenv("DEPTH"));
+        if (System.getenv("BACK") != null) s.back = System.getenv("BACK");
+        if (System.getenv("NOCAVE") != null) s.cave = false;
+        if (System.getenv("LIGHT") != null) s.light = true;
+        if (System.getenv("NOTHICK") != null) s.thick = false;
+        // CAM=low|tilt|diorama|far builds what that camera sees (as Renderer3D, at shot.py's 3:2, or ASPECT=WxH); unset, the screen + 32 px
         String cam = System.getenv("CAM");
         float dist = 300;
         if (cam != null) {
             float[] pr = cam.equals("low") ? new float[] { -10, 18, 1.05f } : cam.equals("diorama") ? new float[] { 30, -24, 0.92f }
                        : cam.equals("far") ? new float[] { 22, 0, 0.62f } : new float[] { 16, 0, 1 };
-            dist = s.setCamera(3, 2, pr[0], pr[1], pr[2]);
+            String as = System.getenv("ASPECT");
+            int aw = as == null ? 3 : Integer.parseInt(as.split("x")[0]), ah = as == null ? 2 : Integer.parseInt(as.split("x")[1]);
+            dist = s.setCamera(aw, ah, pr[0], pr[1], pr[2]);
         }
         long built = 0;
         for (int k = 2; k < a.length; k++) {

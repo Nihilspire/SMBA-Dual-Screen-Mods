@@ -58,7 +58,7 @@
     var g = glyphs && glyphs[ch];
     if (!g) return null;
     var c = document.createElement('canvas'); c.width = 8; c.height = 8;
-    var x = c.getContext('2d'), dark = G.shade(color, 0.6);
+    var x = c.getContext('2d'), dark = G.solid ? color : G.shade(color, 0.6);
     for (var i = 0; i < 64; i++) if (g[i]) { x.fillStyle = g[i] === 1 ? color : dark; x.fillRect(i & 7, i >> 3, 1, 1); }
     return (cache[key] = c);
   }

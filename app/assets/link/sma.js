@@ -122,6 +122,10 @@
   S.star = function (m) { return u8(m, 'pl', 0x03001C88); };
   S.stopwatch = function (m) { return u8(m, 'pl', 0x03001CAC); };
   S.subspace = function (m) { return u8(m, 'pl', 0x03001CCF); };
+  // 0.34: main state 0x0A is the level buffer's last page: Subspace, or a pot with no area of its own (the timer above is 0
+  // there). 03001A29 is 1 in such a pot, 2 in a pot that is its own area, otherwise 0.
+  S.extraPage = function (m) { return S.inLevel(m) && S.mainState(m) === 0x0A; };
+  S.pot = function (m) { return u8(m, 'st', 0x03001A29) !== 0; };
   // object slots: 0x70 bytes each from 03001CF0; +0x65 = 1 for a live object (other values: effects), +0x66 class
   // (08 item, 0B enemy, 0C heart, 0D sprite platform; from the per-type table at 08362A47), +0x30 / +0x32 world X / Y
   S.objects = function (m) {
@@ -154,6 +158,16 @@
   S.WORLD_START = [0, 3, 6, 9, 12, 15, 18];
   S.CHARS = ['MARIO', 'PEACH', 'TOAD', 'LUIGI'];
   S.CHAR_COL = ['#e03828', '#f878b0', '#3878f8', '#30b030'];
+  // 0.33: each character's sprite sheet in the ROM (uncompressed, rows of 32 tiles; the level copies it to OBJ tile 512 on)
+  // and OBJ palette 0. Standing is two 16x16 OBJs one above the other, facing left unflipped: tiles 512 + 516 with 2 or more
+  // hearts, 576 + 580 with one (RAM-MAP.md, "Player sprites").
+  S.CHAR_SHEET = [0x2EAB5C, 0x2EEB5C, 0x2F0B5C, 0x2ECB5C];
+  S.CHAR_PAL = [0x305A84, 0x305AC4, 0x305AE4, 0x305AA4];
+  S.SHEET_FIRST = 512; S.SHEET_LEN = 102 * 32; S.STAND_BIG = [512, 516]; S.STAND_SMALL = [576, 580];
+  // 0.34: the title screen's logo in the ROM, raw: the title's BG1, 8 bpp with the BG palette. 312 tiles, 16 map rows of 32
+  // (the game puts them at map rows 14-29), and the ink's box in those rows (RAM-MAP.md, "Title logo").
+  S.SKY_TABLE = 0x02002B20;     // 16 BG colours, the sky by scanline (RAM-MAP.md)
+  S.LOGO_TILES = 0x32DB10; S.LOGO_TILES_LEN = 312 * 64; S.LOGO_MAP = 0x3380D0; S.LOGO_MAP_LEN = 16 * 64; S.LOGO_PAL = 0x332B10; S.LOGO_BOX = [20, 2, 202, 125];
 
   // ---- metatiles (u16 ids; high byte = collision group: 0 none, 1 stand on top, 2 solid)
   S.ROM_METATILE_PTRS = 0x3400E0;

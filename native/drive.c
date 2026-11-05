@@ -69,6 +69,9 @@ int main(int argc, char **argv) {
       if (!strcmp(a, "off")) { gbx_read_hook = NULL; if (rf) fclose(rf); rf = NULL; }
       else { char c[64], lo[32], hi[32], mx[32], fn[256]; sscanf(line, "%63s %31s %31s %31s %255s", c, lo, hi, mx, fn);
         rlo = strtoul(lo, 0, 16); rhi = strtoul(hi, 0, 16); rmax = atol(mx); rn = 0; rf = fopen(fn, "w"); gbx_read_hook = rhook; } }
+    else if (!strcmp(cmd, "trk")) { extern uint32_t sma_t[16];   /* the Dual tracker: time deaths cleared whoLo whoHi warped flags */
+      printf("trk"); for (int i = 0; i < 7; i++) printf(" %08X", sma_t[i]); printf("\n"); }
+    else if (!strcmp(cmd, "trkreset")) sma_track_reset();        /* what the app does for a dev warp */
     else if (!strcmp(cmd, "oc")) gba_set_overclock(atoi(a));
     else if (!strcmp(cmd, "lag")) printf("frame %ld lag %u\n", frames, gba_lag_frames());
     else if (!strcmp(cmd, "flush")) printf("flush %d\n", gba_save_flush());

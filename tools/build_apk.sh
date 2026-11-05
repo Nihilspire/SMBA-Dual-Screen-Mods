@@ -12,7 +12,7 @@ CODE=$(echo "$VER" | awk -F. '{print $1*1000+$2}')
 sed -i "s/android:versionCode=\"[^\"]*\"/android:versionCode=\"$CODE\"/" "$ROOT/app/AndroidManifest.xml"
 # native: rebuild when any glue file is newer than the library
 SO=$ROOT/out/android/libsmadual.so
-if [ ! -f "$SO" ] || [ -n "$REBUILD_NATIVE" ] || [ -n "$(find "$ROOT/native" -newer "$SO" -name '*.[ch]')" ]; then
+if [ ! -f "$SO" ] || [ -n "$REBUILD_NATIVE" ] || [ -n "$(find "$ROOT/native" -newer "$SO" -name '*.[ch]' -not -path '*/ctr/*')" ]; then
   # make can't take paths with spaces and the sysroot can't sit on a case-insensitive Windows drive (bionic has
   # headers differing only in case), so such checkouts build in a Linux-side tree linking back to native/ and tools/
   # (run its tools/setup_toolchain.sh once: bash ~/.cache/sma-dual-build/tools/setup_toolchain.sh)

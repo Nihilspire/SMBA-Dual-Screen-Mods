@@ -230,7 +230,7 @@ final class Scene3D {
         byte[] r = rom;
         if (r == null || !BezelTheme.quad(r, id, q)) return false;
         Gba.retile(id, quadMode, q);
-        if (subspace) {         // the game draws Subspace mirrored: each metatile's left and right tiles swap and flip
+        if (mirrored) {         // the game draws Subspace mirrored: each metatile's left and right tiles swap and flip
             int a = q[0]; q[0] = q[1] ^ 0x400; q[1] = a ^ 0x400;
             a = q[2]; q[2] = q[3] ^ 0x400; q[3] = a ^ 0x400;
         }
@@ -241,8 +241,11 @@ final class Scene3D {
 
     static final int SKY = 0, BACK = 1, PROP = 2, BLOCK = 3, PYR = 4;
     private final HashMap<Integer, Integer> propCache = new HashMap<Integer, Integer>();
+    /** 0.35: the metatiles drawn with the ladder's tiles: 03E / 03F, the same look over scenery, 115 / 116 where you can stand on it. */
+    private static boolean ladder(int id) { return id == 0x03E || id == 0x03F || id == 0x0B4 || id == 0x0B5 || id == 0x115 || id == 0x116; }
     private int classOf(byte[] f, int id) {
         if (id < 0) return SKY;
+        if (ladder(id)) return PROP;                // always see-through, even where the game lets you stand on it
         int g = id >> 8;
         if (g == 1 || (g == 2 && id != 0x202)) return BLOCK;
         Integer c = propCache.get(id);
@@ -276,18 +279,44 @@ final class Scene3D {
         }
         return n >= 20 ? ok * 1000 / n : 0;
     }
+    private int runsKey = -1, runsVal = -1;
+    private byte[] runsRom;
+    /** 0.35: which way an area runs, from its object list in the ROM (placed in world tiles): 1 down (one past row 14), 0 across
+     *  (one past column 15), -1 if none is past the first page. The game's flag stays clear until the camera first moves down,
+     *  and at the top of an area the screen matches both layouts, so what lay below the first page came in only then. */
+    private int areaRuns(int level, int area) {
+        byte[] r = rom;
+        int key = level * 16 + area;
+        if (key == runsKey && r == runsRom) return runsVal;
+        runsKey = key; runsRom = r; runsVal = -1;
+        if (r == null || level > 19 || area > 10) return -1;
+        int t = Gba.ROM_OBJ_LISTS + (level * 11 + area) * 4;
+        if (t + 4 > r.length) return -1;
+        int p = (u16(r, t) | u16(r, t + 2) << 16) & 0x1FFFFFF;
+        for (int n = 0; p != 0 && n < 400 && p + 6 <= r.length; n++, p += 6) {
+            if (u16(r, p) == 0xFF) break;
+            if (u16(r, p + 4) >= 15) { runsVal = 1; break; }
+            if (u16(r, p + 2) >= 16) { runsVal = 0; break; }
+        }
+        return runsVal;
+    }
     /** Picks layout + camera (best match), sets mapped (with the hold described above). */
     private void view(byte[] f) {
         frameNo++;
         quadMode = Gba.quadMode(var16(f, Gba.TILESET), var(f, Gba.TILE_FLAG_A), var(f, Gba.TILE_FLAG_B));
-        // 0.29: Subspace is 3D too (it fell back to the flat picture): one more page after the area's last, in every kind of
-        // area laid out like a horizontal page, with only BG0 and the HUD on.
+        // 0.29: Subspace is 3D too (it fell back to the flat picture): the extra page, laid out like a horizontal page, with
+        // only BG0 and the HUD on. 0.34: the same state is also a pot with no area of its own. That page is always page 10:
+        // 0.29 took it to be the one after the area's last, which only held in an area of 10 pages, so these fell back to
+        // the flat, unmapped view.
         subspace = var(f, Gba.MAIN_STATE) == Gba.STATE_SUBSPACE;
-        pages = Math.min(10, var(f, Gba.PAGES) + 1) + (subspace ? 1 : 0);
-        areaX0 = subspace ? (pages - 1) * 256 : 0;
+        mirrored = subspace && var(f, Gba.EXTRA_KIND) == 2;
+        pot = var(f, Gba.TILE_FLAG_A) != 0;
+        pages = subspace ? Gba.EXTRA_PAGE + 1 : Math.min(10, var(f, Gba.PAGES) + 1);
+        areaX0 = subspace ? Gba.EXTRA_PAGE * 256 : 0;
         int px = var16(f, Gba.PLAYER_X), py = var16(f, Gba.PLAYER_Y);
         Bg b = bg[0];
-        boolean flag = !subspace && var(f, Gba.IS_VERTICAL) != 0;
+        int runs = subspace ? -1 : areaRuns(var(f, Gba.CURRENT_LEVEL), var(f, Gba.AREA_NO));
+        boolean flag = !subspace && (runs >= 0 ? runs == 1 : var(f, Gba.IS_VERTICAL) != 0);
         int best = -1, bx = b.hofs, by = b.vofs; boolean bv = flag;
         boolean play = rom != null && var(f, Gba.MODE) == 3 && var(f, Gba.SUB_MODE) == 1 && (var(f, Gba.MAIN_STATE) == 1 || subspace);
         long bestDist = Long.MAX_VALUE;
@@ -314,7 +343,7 @@ final class Scene3D {
     }
     /** Last match score, 0..1000 (for tests). */
     int quality;
-    private boolean subspace;
+    private boolean subspace, mirrored, pot;
     private int areaX0;
     // BG0's colour effect when it covers the whole screen (Subspace darkens BG0 by 8/16; with a window it only applies inside)
     private int bgDark, bgLight;
@@ -350,6 +379,25 @@ final class Scene3D {
             atlas[k + 3] = (byte) (v != 0 ? 255 : 0);
         }
         if (solid) fillClear(ax, ay);
+        return sl;
+    }
+    /** 0.34: a block tile tinted for a pot wall's side faces: the outline's cream only went grey under the faces' shade. */
+    private int potSideSlot(byte[] f, int cb, int tile, int pal) {
+        long key = 1L << 42 | (long) cb << 32 | (long) tile << 8 | pal;
+        Integer s = slots.get(key);
+        if (s != null) return s;
+        int src = slot(f, false, cb, tile, pal, true);
+        if (nextSlot >= SLOTS) return src;
+        int sl = nextSlot++;
+        slots.put(key, sl);
+        int ax = (sl % (ATLAS_W / 8)) * 8, ay = (sl / (ATLAS_W / 8)) * 8, bx = (src % (ATLAS_W / 8)) * 8, by = (src / (ATLAS_W / 8)) * 8;
+        for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) {
+            int k = ((ay + y) * ATLAS_W + ax + x) * 4, o = ((by + y) * ATLAS_W + bx + x) * 4;
+            atlas[k] = atlas[o];
+            atlas[k + 1] = (byte) ((atlas[o + 1] & 255) * 86 / 100);
+            atlas[k + 2] = (byte) ((atlas[o + 2] & 255) * 70 / 100);
+            atlas[k + 3] = atlas[o + 3];
+        }
         return sl;
     }
     private final int[] fq = new int[64];
@@ -507,6 +555,28 @@ final class Scene3D {
                     }
                     backdrop[k] = (byte) (c >> 16); backdrop[k + 1] = (byte) (c >> 8); backdrop[k + 2] = (byte) c; backdrop[k + 3] = (byte) 255;
                 }
+            }
+        }
+    }
+    // 0.34: inside a pot BG1 is one picture, 32 x 28 tiles down to the pot's floor, the pot's inside with black all round it,
+    // not scenery that goes on: the rest of its map is other screens' tiles. It is the pot's back wall: BG0's pot outline lies
+    // exactly over the edge of the picture, so it sits right behind the outline (see build) and is drawn as it is, with black
+    // past its edges.
+    private static final int POT_COLS = 32, POT_ROWS = 28;
+    private void potPicture(byte[] f, Bg l, int ox, int oy) {
+        for (int i = 3; i < backdrop.length; i += 4) { backdrop[i - 3] = 0; backdrop[i - 2] = 0; backdrop[i - 1] = 0; backdrop[i] = (byte) 128; }
+        if (!l.on) return;
+        for (int ty = 0; ty < POT_ROWS; ty++) for (int tx = 0; tx < POT_COLS; tx++) {
+            int e = entry(f, l, tx * 8, ty * 8), p = (e >> 12) * 16, base = VRAM + l.cb * 0x4000 + (e & 0x3FF) * 32;
+            if (base + 32 > VRAM + 0x10000) continue;
+            int dx = tx * 8 - l.hofs + ox, dy = ty * 8 - l.vofs + oy;
+            for (int j = 0; j < 8; j++) for (int i = 0; i < 8; i++) {
+                int x = dx + i, y = dy + j, sj = (e & 0x800) != 0 ? 7 - j : j, si = (e & 0x400) != 0 ? 7 - i : i;
+                if (x < 0 || y < 0 || x >= BD_W || y >= BD_H) continue;
+                int v = (u8(f[base + sj * 4 + (si >> 1)]) >> ((si & 1) * 4)) & 15;
+                if (v == 0) continue;
+                int c = bgr(f, p + v), k = (y * BD_W + x) * 4;
+                backdrop[k] = (byte) (c >> 16); backdrop[k + 1] = (byte) (c >> 8); backdrop[k + 2] = (byte) c;
             }
         }
     }
@@ -737,7 +807,9 @@ final class Scene3D {
         for (int i = 0; i < CYL_SEG; i++) {
             float ta = t0 + (t1 - t0) * i / CYL_SEG, tb = t0 + (t1 - t0) * (i + 1) / CYL_SEG, fa = i / (float) CYL_SEG, fb = (i + 1) / (float) CYL_SEG;
             float sa = 8 * (float) Math.sin(ta), sb = 8 * (float) Math.sin(tb), ca = (float) Math.cos(ta), cb = (float) Math.cos(tb);
-            for (int side = 0; side < 2; side++) {
+            // 0.39: an upright one has no back half: where its art is clear (a jar's narrow foot, a cactus's spines) the back's
+            // outline showed through as dark steps down one side
+            for (int side = 0; side < (jar ? 1 : 2); side++) {
                 float g = side == 0 ? 1 : -1, zc = side == 0 ? zf1 : zb1, za = zc + g * rz * ca, zb = zc + g * rz * cb;
                 if (jar) {
                     float xa = axis + sa, xb = axis + sb, uA = ua + (ub - ua) * fa, uB = ua + (ub - ua) * fb;
@@ -850,18 +922,87 @@ final class Scene3D {
             quad(x0, ys, z, x1, ys, z, x1, ys, z2, x0, ys, z2, ba, bva, bb, bva, bb, vz, ba, vz, 0.95f, 0);
         }
     }
-    static final int SH_NONE = 0, SH_JAR = 1, SH_LOG = 2, SH_WATER = 3, SH_CROSS = 4, SH_BEVEL = 5;
+    static final int SH_NONE = 0, SH_JAR = 1, SH_LOG = 2, SH_WATER = 3, SH_CROSS = 4, SH_BEVEL = 5, SH_SILH = 6;
     private static int shapeOf(int t, int ws) {
         if (t < 0) return SH_NONE;
-        if (t >= 0x21A && t <= 0x21F) return SH_JAR;
+        // 0.39: the jar's art is shared by 149-14E, 1F5 and 2C6 too; a jar topped with 2C6 (5-2's, the rows in 6-1) had a cube for a top
+        if ((t >= 0x21A && t <= 0x21F) || t == 0x2C6 || t == 0x1F5 || (t >= 0x149 && t <= 0x14E)) return SH_JAR;
         if ((t == 0x205 || t == 0x206) && (ws == 1 || ws == 5)) return SH_JAR;     // the desert's cacti: round too, no lid
-        if (t >= 0x220 && t <= 0x222) return ws == 1 || ws == 5 ? SH_BEVEL : SH_LOG;
+        if ((t == 0x208 || t == 0x209) && ws == 3) return SH_JAR;                  // world 4's sand pillars: as boxes their clear sides filled with the dark outline
+        if ((t == 0x242 || t == 0x243) && ws == 6) return SH_JAR;                  // world 7's columns
+        if (t == 0x127 || (t == 0x105 && ws == 6)) return SH_CROSS;                // a vine's top you can stand on, 7-2's chain
+        if ((t == 0x00C || t == 0x011 || t == 0x016 || t == 0x017) && ws == 3) return SH_WATER;   // the sea where a whale sits in it
+        if (t >= 0x220 && t <= 0x222 && ws != 1 && ws != 5) return SH_LOG;         // in the deserts these are bones (see silhouette)
         if (t == 0x104 || t == 0x117) return SH_BEVEL;
         if ((t == 0x004 || t == 0x005) && ws != 1 && ws != 5 && ws != 6) return SH_WATER;
         if ((t == 0x008 || t == 0x00A) && ws == 3) return SH_WATER;
         if ((t == 0x050 || t == 0x051) && (ws == 1 || ws == 5)) return SH_WATER;    // the desert's floor (no collision: it's soft)
         if ((t >= 0x025 && t <= 0x02F) || (t >= 0x095 && t <= 0x09C) || (t >= 0x059 && t <= 0x05C)) return SH_CROSS;
         return SH_NONE;
+    }
+
+    // 0.38: a solid metatile that is largely clear (a whale's round back, half-height bars and platforms, mushroom blocks, a
+    // boulder). As a block, its clear texels took the nearest colour, usually the dark outline, so it was a square slab with
+    // wedges of outline in its corners. Now its front drops the clear texels and walls run back from each edge of the real
+    // outline, coloured from just inside the outline. World 4's whales are all listed: only some of their cells are clear enough
+    // to pass the count, and they have to meet. Ground and hill edges round in their own way (natural, hill); the walls of 26E
+    // and on are keyed by level state and only clip a corner.
+    private final HashMap<Integer, Boolean> silhCache = new HashMap<Integer, Boolean>();
+    private boolean silhouette(byte[] f, int t, int ws) {
+        if (t < 0) return false;
+        if (ws == 3 && ((t >= 0x24E && t <= 0x25A) || t == 0x10A || t == 0x03B || t == 0x03C)) return true;
+        if (t == 0x113) return true;                                                  // 0.39: a log's round end, facing you: a stack of them in a pot
+        if ((ws == 1 || ws == 5) && t >= 0x220 && t <= 0x222) return true;            // 0.39: the deserts' bones, see-through between the ribs
+        if (t >> 8 == 0 || t >= 0x26E || t == 0x202 || natural(t) || hill(t) || cloud(t) || ladder(t)) return false;
+        Boolean b = silhCache.get(t);
+        if (b != null) return b;
+        boolean s = false;
+        if (quad(t)) {
+            int n = 0;
+            for (int i = 0; i < 4; i++) for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++)
+                if (bgPixel(f, bg[0].cb, q[i] & 0x3FF, x, y) != 0) n++;
+            s = n > 0 && 256 - n >= 24;
+        }
+        silhCache.put(t, s);
+        return s;
+    }
+    /** Is the pixel at i, j (0..7, or one past, into the next cell) of a cell solid? Solid blocks count whole, others not at all. */
+    private boolean silhSolid(byte[] f, int[][] cls, int[][] ent, int[][] shp, int R, int C, int i, int j) {
+        if (i < 0) { C--; i += 8; } else if (i > 7) { C++; i -= 8; }
+        if (j < 0) { R--; j += 8; } else if (j > 7) { R++; j -= 8; }
+        if (R < 0 || C < 0 || R >= cls.length || C >= cls[0].length || cls[R][C] != BLOCK) return false;
+        int sh = shp[R][C];
+        if (sh != SH_SILH) return sh == SH_NONE || sh == SH_BEVEL;
+        int e = ent[R][C];
+        return e >= 0 && bgPixel(f, bg[0].cb, e & 0x3FF, (e & 0x400) != 0 ? 7 - i : i, (e & 0x800) != 0 ? 7 - j : j) != 0;
+    }
+    private float silhU, silhV;
+    /** A wall's colour: the texel k px in from the edge at i, j, past the outline if it can be. */
+    private void silhColour(byte[] f, int[][] ent, int R, int C, int i, int j, int di, int dj) {
+        for (int k = 2; k >= 0; k--) {
+            int a = i + di * k, b = j + dj * k, rr = R, cc = C;
+            if (a < 0) { cc--; a += 8; } else if (a > 7) { cc++; a -= 8; }
+            if (b < 0) { rr--; b += 8; } else if (b > 7) { rr++; b -= 8; }
+            if (rr < 0 || cc < 0 || rr >= ent.length || cc >= ent[0].length || ent[rr][cc] < 0) continue;
+            int e = ent[rr][cc], px = (e & 0x400) != 0 ? 7 - a : a, py = (e & 0x800) != 0 ? 7 - b : b;
+            if (bgPixel(f, bg[0].cb, e & 0x3FF, px, py) == 0) continue;
+            uvSlot(slot(f, false, bg[0].cb, e & 0x3FF, e >> 12));
+            silhU = u0 + (u1 - u0) * (px + 0.5f) / 8; silhV = v0 + (v1 - v0) * (py + 0.5f) / 8;
+            return;
+        }
+    }
+    private void silhCell(byte[] f, int[][] cls, int[][] ent, int[][] shp, int R, int C, float x0, float y0, float zt, float zb, float ua, float ub, float va, float vb) {
+        quad(x0, y0 - 8, zt, x0 + 8, y0 - 8, zt, x0 + 8, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, 2);
+        int e = ent[R][C];
+        if (e < 0) return;
+        for (int j = 0; j < 8; j++) for (int i = 0; i < 8; i++) {
+            if (bgPixel(f, bg[0].cb, e & 0x3FF, (e & 0x400) != 0 ? 7 - i : i, (e & 0x800) != 0 ? 7 - j : j) == 0) continue;
+            float xa = x0 + i, xb = xa + 1, ya = y0 - j, yb = ya - 1;
+            if (!silhSolid(f, cls, ent, shp, R, C, i, j - 1)) { silhColour(f, ent, R, C, i, j, 0, 1); quad(xa, ya, zt, xb, ya, zt, xb, ya, zb, xa, ya, zb, silhU, silhV, silhU, silhV, silhU, silhV, silhU, silhV, 0.86f, 0); }
+            if (!silhSolid(f, cls, ent, shp, R, C, i, j + 1)) { silhColour(f, ent, R, C, i, j, 0, -1); quad(xa, yb, zb, xb, yb, zb, xb, yb, zt, xa, yb, zt, silhU, silhV, silhU, silhV, silhU, silhV, silhU, silhV, 0.45f, 0); }
+            if (!silhSolid(f, cls, ent, shp, R, C, i - 1, j)) { silhColour(f, ent, R, C, i, j, 1, 0); quad(xa, yb, zb, xa, yb, zt, xa, ya, zt, xa, ya, zb, silhU, silhV, silhU, silhV, silhU, silhV, silhU, silhV, 0.66f, 0); }
+            if (!silhSolid(f, cls, ent, shp, R, C, i + 1, j)) { silhColour(f, ent, R, C, i, j, -1, 0); quad(xb, yb, zt, xb, yb, zb, xb, ya, zb, xb, ya, zt, silhU, silhV, silhU, silhV, silhU, silhV, silhU, silhV, 0.66f, 0); }
+        }
     }
 
     // Round sprites (option, 0.25): instead of thick walls, each sprite is inflated like the clouds from its outline, in a
@@ -920,17 +1061,17 @@ final class Scene3D {
     }
     /** blockFront for hiding a neighbour's side face: a jar or log doesn't fill its cell, so the face next to it stays. */
     private static float solidFront(int[][] cls, int[][] nst, boolean[][] hil, int[][] shp, int r, int c, float zf, int D) {
-        return shp[r][c] == SH_JAR || shp[r][c] == SH_LOG ? Float.NEGATIVE_INFINITY : blockFront(cls, nst, hil, r, c, zf, D);
+        return shp[r][c] == SH_JAR || shp[r][c] == SH_LOG || shp[r][c] == SH_SILH ? Float.NEGATIVE_INFINITY : blockFront(cls, nst, hil, r, c, zf, D);
     }
     private static int fdiv(int a, int b) { int r = a / b; if ((a % b != 0) && ((a < 0) != (b < 0))) r--; return r; }
 
     /** camDist: distance from the camera to the z = 0 plane (for the backdrop scale). */
     void build(byte[] f, float camDist) {
-        if (rom != quadRom) { quadRom = rom; propCache.clear(); }
+        if (rom != quadRom) { quadRom = rom; propCache.clear(); silhCache.clear(); }
         readBgs(f);
         view(f);
         skyRgb = bgr(f, 0);
-        if (!mapped) propCache.clear();       // tile graphics change between areas
+        if (!mapped) { propCache.clear(); silhCache.clear(); }   // tile graphics change between areas
         slots.clear(); nextSlot = 0;
         nv = 0;
         int bld = u16(f, IO + 0x50), bfx = (bld >> 6) & 3, evy = Math.min(16, u16(f, IO + 0x54) & 31);
@@ -959,7 +1100,7 @@ final class Scene3D {
         int tx0 = fdiv(b.hofs, 8) - ML, ty0 = fdiv(b.vofs, 8) - MT;
         int cols = fdiv(b.hofs + W - 1, 8) + MR - tx0 + 1, rows = fdiv(b.vofs + H - 1, 8) + MB - ty0 + 1;
         int[][] cls = new int[rows + 2][cols + 2], ent = new int[rows + 2][cols + 2], nst = new int[rows + 2][cols + 2];
-        boolean[][] hil = new boolean[rows + 2][cols + 2], cut = new boolean[rows + 2][cols + 2], rnd = new boolean[rows + 2][cols + 2];
+        boolean[][] hil = new boolean[rows + 2][cols + 2], cut = new boolean[rows + 2][cols + 2], rnd = new boolean[rows + 2][cols + 2], lad = new boolean[rows + 2][cols + 2];
         int[][] shp = new int[rows + 2][cols + 2];
         int ws = mapped ? var16(f, 0x030019FC) : -1;       // world graphics set (RAM-MAP)
         int[][][] pyr = new int[rows + 2][cols + 2][];
@@ -977,7 +1118,11 @@ final class Scene3D {
             else {
                 boolean empty = emptyBgTile(f, b.cb, e & 0x3FF);
                 if (!mapped) k = empty ? SKY : BACK;
-                else { k = classOf(f, mt); if (empty && k != BLOCK) k = SKY; }
+                else {
+                    k = classOf(f, mt);
+                    if (k == BLOCK && (mt == 0x127 || (mt == 0x105 && ws == 6))) k = PROP;   // see-through, solid or not
+                    if (empty && k != BLOCK) k = SKY;
+                }
                 if (mapped && k != SKY && k != BLOCK && pyrId(mt)) {
                     int key = (camX + sx + 4) >> 4 << 8 | ((camY + sy + 4) >> 4 & 255);
                     int[] p = pyrMemo.get(key);
@@ -990,8 +1135,10 @@ final class Scene3D {
             hil[r + 1][c + 1] = mt >= 0 && hill(mt);
             cut[r + 1][c + 1] = cloud(mt);
             rnd[r + 1][c + 1] = mt >= 0 && (hill(mt) || natural(mt));
+            lad[r + 1][c + 1] = ladder(mt);
             int sh = mapped && k != SKY ? shapeOf(mt, ws) : SH_NONE;
             if (sh == SH_CROSS && k != PROP) sh = SH_NONE;
+            if (sh == SH_NONE && mapped && k != SKY && silhouette(f, mt, ws)) sh = SH_SILH;
             if (sh == SH_WATER) cls[r + 1][c + 1] = PROP;      // not a block: its neighbours keep their side faces
             shp[r + 1][c + 1] = sh;
         }
@@ -999,10 +1146,13 @@ final class Scene3D {
         // (blocks) but the bodies are plain opaque scenery (back wall), so the cap stuck out as a separate slab over a
         // recessed body. Whatever opaque scenery hangs directly under a block, down to the first gap, is block too
         // (mostly-opaque edge tiles included; their clear pixels take the sky colour on the faces).
+        // 0.35: not a ladder: it is mostly opaque too, but what shows between its rungs is the far layer, and as a block (the
+        // stand-on kind were blocks anyway, see classOf) the gaps took the colour next to them, the rails' dark green, on a solid
+        // slab sticking out of the wall.
         if (mapped) for (int c = 0; c < cols + 2; c++) for (int r = 1; r < rows + 2; r++) {
             if (cls[r - 1][c] != BLOCK) continue;
             int k = cls[r][c], e = ent[r][c];
-            if (shp[r][c] == SH_WATER) continue;
+            if (shp[r][c] == SH_WATER || shp[r][c] == SH_CROSS || lad[r][c]) continue;
             if (k == BACK || (k == PROP && e >= 0 && opaquePixels(f, b.cb, e & 0x3FF) >= 40)) cls[r][c] = BLOCK;
         }
         // The ground under a hill that comes forward comes forward with it (0.14): otherwise the hill's front face stood
@@ -1038,8 +1188,10 @@ final class Scene3D {
             if (k == SKY) continue;
             int e = ent[r + 1][c + 1], sh = shp[r + 1][c + 1];
             boolean cl = cut[r + 1][c + 1];
-            boolean clear = cl || sh == SH_JAR || sh == SH_LOG || sh == SH_WATER;   // shapes with their own outline
-            uvSlot(slot(f, false, b.cb, e & 0x3FF, e >> 12, k == BLOCK && !clear));
+            boolean clear = cl || sh == SH_JAR || sh == SH_LOG || sh == SH_WATER || sh == SH_SILH;   // shapes with their own outline
+            // 0.39: a cloud's shape comes from its own field, so its texels are all solid: its clear ones were holes on its top, the
+            // sky through them, which only showed against a night sky (5-2's black squares)
+            uvSlot(slot(f, false, b.cb, e & 0x3FF, e >> 12, k == BLOCK && (!clear || cl)));
             float ua = (e & 0x400) != 0 ? u1 : u0, ub = (e & 0x400) != 0 ? u0 : u1, va = (e & 0x800) != 0 ? v1 : v0, vb = (e & 0x800) != 0 ? v0 : v1;
             float x0 = (tx0 + c) * 8 - b.hofs, x1 = x0 + 8, y0 = -((ty0 + r) * 8 - b.vofs), y1 = y0 - 8;
             int wx = camX + Math.round(x0), wy = camY - Math.round(y0);          // the cell's world pixel
@@ -1069,13 +1221,14 @@ final class Scene3D {
             // sits further back
             float zt = blockFront(cls, nst, hil, r + 1, c + 1, zf, D), fk = 0;
             if (cl) { pillowCell(c * 8, r * 8, x0, y0, (zt + zb) / 2, (zt - zb) / 2, ua, ub, va, vb); continue; }
+            if (sh == SH_SILH) { silhCell(f, cls, ent, shp, r + 1, c + 1, x0, y0, zt, zb, ua, ub, va, vb); continue; }
             if (sh == SH_JAR || sh == SH_LOG) {
                 boolean jar = sh == SH_JAR;
                 float axis = jar ? (wx & ~15) + 8 - camX : (wy & ~15) + 8 - camY, zm = (zt + zb) / 2, rz = Math.min(8, (zt - zb) / 2);   // round, not deeper than wide
                 float z1 = jar ? zm : zt - rz, z2 = jar ? zm : zb + rz;
                 cylCell(jar, x0, y0, axis, z1, z2, rz, ua, ub, va, vb);
                 int mt = meta(f, wx + 4, wy + 4);
-                if (jar && mt >= 0x21A && shp[r][c + 1] != SH_JAR) cylCap(true, x0, y0, axis, z1, z2, rz, (ua + ub) / 2, va + (vb - va) * 0.2f, 0);
+                if (jar && (mt >= 0x21A || mt == 0x1F5 || (mt >= 0x149 && mt <= 0x14E)) && shp[r][c + 1] != SH_JAR) cylCap(true, x0, y0, axis, z1, z2, rz, (ua + ub) / 2, va + (vb - va) * 0.2f, 0);
                 if (!jar && mt == 0x220 && (wx & 15) == 0) cylCap(false, x0, y0, axis, z1, z2, rz, ua + (ub - ua) * 0.3f, (va + vb) / 2, -1);
                 if (!jar && mt == 0x222 && (wx & 15) == 8) cylCap(false, x0, y0, axis, z1, z2, rz, ua + (ub - ua) * 0.7f, (va + vb) / 2, 1);
                 continue;
@@ -1101,6 +1254,13 @@ final class Scene3D {
                 zs = zt - rz;
             }
             else quad(x0, y1, zt, x1, y1, zt, x1, y0, zt, x0, y0, zt, ua, vb, ub, vb, ub, va, ua, va, 1f, fk);
+            if (pot && mapped) {
+                int mw = meta(f, wx + 4, wy + 4);
+                if (mw >= 0x296 && mw <= 0x2B0) {            // the pot's outline
+                    uvSlot(potSideSlot(f, b.cb, e & 0x3FF, e >> 12));
+                    ua = (e & 0x400) != 0 ? u1 : u0; ub = (e & 0x400) != 0 ? u0 : u1; va = (e & 0x800) != 0 ? v1 : v0; vb = (e & 0x800) != 0 ? v0 : v1;
+                }
+            }
             float ta = va, tb = vb, sa = ua, sb = ub;
             if (solidFront(cls, nst, hil, shp, r, c + 1, zf, D) < zt) quad(x0, y0, zs, x1, y0, zs, x1, y0, zb, x0, y0, zb, ua, ta, ub, ta, ub, tb, ua, tb, 0.86f, fk);
             if (solidFront(cls, nst, hil, shp, r + 2, c + 1, zf, D) < zt) quad(x0, y1, zb, x1, y1, zb, x1, y1, zs, x0, y1, zs, ua, tb, ub, tb, ub, ta, ua, ta, 0.45f, fk);
@@ -1122,6 +1282,17 @@ final class Scene3D {
                 for (int j = i; j > 0 && bg[far[j]].prio() > bg[far[j - 1]].prio(); j--) { int t = far[j]; far[j] = far[j - 1]; far[j - 1] = t; }
             int fk = (mapped ? 1 << 12 : 0) | (vertical ? 1 << 13 : 0) | (subspace ? 1 << 14 : 0) | var(f, Gba.CURRENT_LEVEL) << 4 | var(f, Gba.AREA_NO);
             if (fk != farKey) { farKey = fk; Arrays.fill(farSeen, 0); }
+            final boolean potWall = pot && mapped;
+            if (potWall) {
+                long key = 29 + layerKey(f, bg[1]);
+                if (key != bdKey) { bdKey = key; potPicture(f, bg[1], ox, oy); bdChanged = true; }
+                bdSky = 0; skyRgb = 0;
+                // no parallax: a texel is a world unit, so the picture stays under the outline from every camera
+                float z = zb - 0.5f, cxp = W / 2f, cyp = -H / 2f, hwp = BD_W * 1.5f, hhp = BD_H * 1.5f;
+                quad(cxp - hwp, cyp - hhp, z, cxp + hwp, cyp - hhp, z, cxp + hwp, cyp + hhp, z, cxp - hwp, cyp + hhp, z, -1, 2, 2, 2, 2, -1, -1, -1, 1, 3);
+                caveCount = nv - caveStart;
+            }
+            else {
             for (int li : far) markSeen(li);
             // as far as the camera sees, in steps so that a moving camera doesn't redraw every frame for a pixel
             int xa = Math.max(0, ox - ((int) bdL + 15 & ~15)), xb = Math.min(BD_W, ox + W + ((int) bdR + 15 & ~15));
@@ -1214,6 +1385,7 @@ final class Scene3D {
             float cx = W / 2f, cy = -H / 2f, hw = BD_W / 2f * sc * 3, hh = BD_H / 2f * sc * 3;
             quad(cx - hw, cy - hh, z, cx + hw, cy - hh, z, cx + hw, cy + hh, z, cx - hw, cy + hh, z, -1, 2, 2, 2, 2, -1, -1, -1, 1, 3);
             caveCount = nv - caveStart;
+            }
         }
         // 0.21: the sky eases to its new colour instead of jumping. Taken from whatever far layer covers the top of the
         // screen, it flipped every few frames as the camera moved (5-3's cave between black, brown and olive rock, 5-1

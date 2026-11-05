@@ -47,8 +47,10 @@ final class Gba {
     // 0.17: the level renderer (08029EC2) redraws metatiles 0x26E..0x2C5 differently by level state: when 03001A4B = 1,
     // entry = (quad & 0x1FF) | 0x6000 (palette 6); else when the world's graphics set 030019FC (u16: 0 grass, 1 desert,
     // 3 ice) is 3 and 03001A29 = 0, entry = (quad & 0xFF) | 0x2200 (palette 2, tiles 0x200..0x2FF) — world 4's ice walls.
-    // (03001A2A = 2 is Subspace, drawn mirrored; not modelled.) The ROM quads alone matched 4-1 only half way.
-    static final int TILESET = 0x030019FC, TILE_FLAG_A = 0x03001A29, TILE_FLAG_B = 0x03001A4B;
+    // The ROM quads alone matched 4-1 only half way.
+    // 0.34: 03001A29 is also how to tell a pot: 1 for a pot on the extra page, 2 for a pot that is its own area, else 0.
+    // 03001A2A = 2 is Subspace (drawn mirrored), 1 a pot on the extra page, else 0.
+    static final int TILESET = 0x030019FC, TILE_FLAG_A = 0x03001A29, TILE_FLAG_B = 0x03001A4B, EXTRA_KIND = 0x03001A2A;
     static int quadMode(int tileset, int flagA, int flagB) { return flagB == 1 ? 2 : tileset == 3 && flagA == 0 ? 1 : 0; }
     static void retile(int id, int mode, int[] q) {
         if (mode == 0 || id <= 0x26D || id > 0x2C5) return;
@@ -77,8 +79,9 @@ final class Gba {
     static int maxHearts() { return Math.min(4, 2 + Native.peek(MUSHROOMS)); }
     static boolean inLevel() { return Native.peek(MODE) == 3 && Native.peek(SUB_MODE) == 1; }
     static boolean inGame() { return inLevel() && Native.peek(MAIN_STATE) == 1; }
-    /** In a level with the game running: playing, or in Subspace (main state 0x0A). */
-    static final int STATE_SUBSPACE = 0x0A;
+    /** In a level with the game running: playing, or on the extra page (main state 0x0A: Subspace, or a pot that has no area
+     *  of its own). That page is always page 10, the level buffer's last, however many pages the area has. */
+    static final int STATE_SUBSPACE = 0x0A, EXTRA_PAGE = 10;
     static boolean inPlay3d() { int s = Native.peek(MAIN_STATE); return inLevel() && (s == 1 || s == STATE_SUBSPACE); }
     static boolean inGameOrPause() { return inLevel(); }
     static boolean charSelect() { return Native.peek(MODE) == 3 && Native.peek(SUB_MODE) == 0 && Native.peek(MAIN_STATE) == 1; }

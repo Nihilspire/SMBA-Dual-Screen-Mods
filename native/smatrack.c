@@ -5,7 +5,7 @@
 #include "gbacore.h"
 
 #define MODE         0x030019B0u   /* 3 = SMB2 */
-#define SUB_MODE     0x03001991u   /* 1 = in a level (0 = character select / chart, 2 Bonus Chance, 4 the ending) */
+#define SUB_MODE     0x03001991u   /* 1 = in a level (0 = character select / chart, 2 Bonus Chance, 4 the ending, 6 Yoshi Challenge eggs) */
 #define MAIN_STATE   0x03001992u   /* in a level: 1 playing, 0x0D pause. Also 1 at character select, hence the others */
 #define CUR_LEVEL    0x03001160u   /* 0..19 = 1-1 .. 7-2 */
 #define LIVES        0x03001161u
@@ -13,8 +13,9 @@
 
 uint32_t sma_t[16];                /* T_TIME, T_DEATHS, T_CLEARED, T_WHO_LO, T_WHO_HI, T_WARPED, T_FLAGS */
 static int last_level = -1, last_lives = -1, last_char;
+static int prev_mode = -1, prev_sub, prev_level;   /* the frame before, on any screen */
 
-void sma_track_reset(void) { last_level = -1; last_lives = -1; }
+void sma_track_reset(void) { last_level = -1; last_lives = -1; prev_mode = -1; }
 void sma_track_clear(void) { memset(sma_t, 0, sizeof sma_t); sma_track_reset(); }
 
 static void cleared(int lv, int ch) {
@@ -26,14 +27,22 @@ static void cleared(int lv, int ch) {
 }
 
 void sma_track(void) {
+  int mode = gba_peek(MODE), sub = gba_peek(SUB_MODE), level = gba_peek(CUR_LEVEL);
+  /* 0.40: a level is finished the moment the game leaves it: for Bonus Chance (2) or the egg screen (6), or with the level
+   * already moved on (the Yoshi Challenge's other way out, 080468A8). Waiting for the next level's first frame, as this did
+   * before, left the chart without a finisher through Bonus Chance, the chart and character select, and for good if a
+   * state load, an app resume or a dev warp came in between. The character byte still holds who finished. */
+  if (mode == 3 && prev_mode == 3 && prev_sub == 1 && (sub == 2 || sub == 6 || level == prev_level + 1))
+    cleared(prev_level, gba_peek(CHARACTER) & 3);
+  prev_mode = mode; prev_sub = sub; prev_level = level;
   /* 0.23: 7-2 has no next level to move to, so its clear is the ending starting (sub-mode 4) */
-  if (gba_peek(MODE) == 3 && gba_peek(SUB_MODE) == 4 && !(sma_t[6] & 2) && gba_peek(CUR_LEVEL) == 19) {
+  if (mode == 3 && sub == 4 && !(sma_t[6] & 2) && level == 19) {
     cleared(19, last_level == 19 ? last_char : gba_peek(CHARACTER) & 3);
     sma_t[6] |= 2;                         /* saw the ending */
   }
-  if (gba_peek(MODE) != 3 || gba_peek(SUB_MODE) != 1 || gba_peek(MAIN_STATE) != 1) return;
+  if (mode != 3 || sub != 1 || gba_peek(MAIN_STATE) != 1) return;
   sma_t[0]++;
-  int lv = gba_peek(CUR_LEVEL), li = gba_peek(LIVES), ch = gba_peek(CHARACTER) & 3;
+  int lv = level, li = gba_peek(LIVES), ch = gba_peek(CHARACTER) & 3;
   if (last_lives >= 0 && li == last_lives - 1) sma_t[1]++;
   if (last_level >= 0 && lv != last_level && lv <= 19) {
     if (lv == last_level + 1) cleared(last_level, last_char);

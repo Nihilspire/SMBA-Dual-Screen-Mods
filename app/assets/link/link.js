@@ -8,6 +8,7 @@
   'use strict';
   var G = GbaGfx, S = SMA;
   var DUAL = !!(window.Native && Native.dual);
+  var LINK = !!(window.Native && Native.link);    // Super Mario Advance Link: the game runs in RetroArch (linkapp/); its Native answers Dual's calls
   var cv = document.getElementById('c'), ctx = cv.getContext('2d');
   var W = 240, H = 176, layout = {}, tabs = [], tab = 'map', buttons = [];
   var romOk = false, meta = null, ram = null, lvl = null, video = null, trk = null, tickN = 0;
@@ -17,11 +18,13 @@
   var store = window.localStorage || { getItem: function () { return null; }, setItem: function () {} };
   var opts = load('sma.opts', { xray: true, markers: true, zoom: 'near' });
   // 0.14: map zoom = one of four levels, tapped through (WIDE, FIT, NEAR, 1:1); FIT shows the area's whole height.
-  // (0.13's screen styles are gone; the cream cards are the one look.)
+  // (0.13's screen styles are gone; the game's own pause-panel windows are the one look.)
   if (!(opts.zl >= 0 && opts.zl <= 3)) opts.zl = 1;
   var C = { white: '#f8f8f8', cream: '#fbf4dc', parch: '#efe0b8', orange: '#c86410', brown: '#5a3818', dbrown: '#3a2008',
             red: '#e03828', dred: '#902010', green: '#40b030', dgreen: '#187018', blue: '#3070e0', lblue: '#88c8f8',
-            grey: '#988870', navy: '#182850', night: '#0c1430', yellow: '#f8c800', pink: '#f0a8c0', black: '#000' };
+            grey: '#988870', navy: '#182850', night: '#0c1430', yellow: '#f8c800', pink: '#f0a8c0', black: '#000',
+            edge: '#9a7048', line: '#d8b878', title: '#a82a1a', big: '#b42a18' };
+  G.solid = true;      // each letter one colour, as in the game's windows
 
   // Text on the cream cards: every colour at least 4.5:1 against cream (0.10 used the bright map colours for words too:
   // green 2.6, grey 3.1, Peach's pink 2.3).
@@ -65,6 +68,15 @@
     if (p) list = S.parseObjList(G.b64(Native.rom(p, 1200)));
     return (objLists[k] = list);
   }
+  // 0.35: which way the area runs, from its object list: objects are placed in world tiles, so one past row 14 means it runs
+  // down and one past column 15 means it runs across. Right from the first frame, where the screen can't tell (the two
+  // readings of the first page are the same, and the game's own flag 0300116F stays clear until the camera first moves down).
+  // No area of more than one page has both. Null if none of its objects is past the first page (3 of the 100 such areas).
+  function areaRuns() {
+    var list = objList();
+    for (var i = 0; i < list.length; i++) { if (list[i].y >= 15) return true; if (list[i].x >= 16) return false; }
+    return null;
+  }
   // Ace Coins placed in this area: [{x, y, bit, got}]
   function aceHere() {
     var lv = S.level(ram); if (lv > 19) return [];
@@ -78,7 +90,7 @@
     var t = meta[g], o = i * 8;
     return [t[o] | t[o + 1] << 8, t[o + 2] | t[o + 3] << 8, t[o + 4] | t[o + 5] << 8, t[o + 6] | t[o + 7] << 8];
   }
-  window.onRom = function () { romOk = false; meta = null; loadRom(); draw(); };
+  window.onRom = function () { romOk = false; meta = null; charSpr = {}; logoCv = null; kitTried = 0; loadRom(); draw(); };
   window.onSession = function () { areaKey = ''; };
   window.onLayout = function () { resize(); };
   window.onDev = function () { draw(); };
@@ -92,24 +104,25 @@
     var tabH = 13;
     layout = { tabY: H - tabH };
     if (W >= 300) {                       // landscape: status column on the left
-      layout.a = { x: 3, y: 3 }; layout.b = { x: 3, y: 3 + A_H + 3 };
-      layout.pane = { x: 134, y: 2, w: W - 136, h: H - tabH - 4 };
+      layout.a = { x: 2, y: 2 }; layout.b = { x: 2, y: 2 + A_H + 1 }; layout.bh = B_H;
+      layout.pane = { x: 121, y: 1, w: W - 122, h: H - tabH - 2 };
       tabs = ['map', 'chart', 'options'];
-    } else if (H >= 300) {                // portrait: status across the top
-      layout.a = { x: 2, y: 3 }; layout.b = { x: 121, y: 3 };
-      layout.pane = { x: 1, y: A_H + 6, w: W - 2, h: H - tabH - A_H - 8 };
+    } else if (H >= 300) {                // portrait: status across the top, two cards of one height
+      layout.a = { x: 1, y: 2 }; layout.b = { x: 121, y: 2 }; layout.bh = A_H;
+      layout.pane = { x: 0, y: A_H + 3, w: W, h: H - tabH - A_H - 4 };
       tabs = ['map', 'chart', 'options'];
     } else {                              // small: everything behind tabs
-      layout.a = { x: 2, y: 4 }; layout.b = { x: 121, y: 4 };
-      layout.pane = { x: 1, y: 2, w: W - 2, h: H - tabH - 4 };
+      layout.a = { x: 1, y: 2 }; layout.b = { x: 121, y: 2 }; layout.bh = A_H;
+      layout.pane = { x: 0, y: 1, w: W, h: H - tabH - 2 };
       tabs = ['status', 'map', 'chart', 'options'];
       layout.small = true;
     }
+    if (LINK && opts.tab3d) tabs.splice(tabs.length - 1, 0, '3d');
     if (tabs.indexOf(tab) < 0) tab = tabs[0];
     draw();
   }
   addEventListener('resize', resize);
-  var A_H = 89, B_H = 63;                 // status cards: rows sized for the 16x16 item icons
+  var A_W = 118, A_H = 92, B_H = 66;      // status cards: rows sized for the 16x16 item icons
 
   // ------------------------------------------------------------------ polling
   function poll() {
@@ -123,11 +136,12 @@
       maxHearts = S.maxHearts(ram);
       // 11 pages: the area's 10 at most, then subspace's
       if (tickN - lastLvl >= 5) { lastLvl = tickN; var lh = Native.mem('2000000:5280'); if (lh.length === 10560) lvl = S.hexBytes(lh); }
-      if (tickN - lastVid >= 10 && (S.playing(ram) || S.subspace(ram))) {
+      if (tickN - lastVid >= 10 && (S.playing(ram) || S.extraPage(ram))) {   // 0.34: not the Subspace timer: it is 0 in a pot, which left no map
         lastVid = tickN;
         var v = Native.video ? Native.video() : '';
         if (v) { var nv = G.b64(v); if (nv.length >= 0x18860) video = nv; }
         grabPortrait(); grabLive();
+        updateGeo(); markFar();
       }
       updateGeo();
     }
@@ -141,6 +155,15 @@
   }
   function cleared(L) { return trk && ((trk.cleared >>> L) & 1); }
   function clearedBy(L) { var b = L * 2, w = b < 32 ? trk.whoLo : trk.whoHi; return (w >>> (b & 31)) & 3; }
+  // 0.40: levels the file calls cleared but the tracker can't name (before 0.40 a resume or a state load between a level's end
+  // and the next level lost the name). The file's own count per character can still tell, if only one character has more
+  // clears than the tracker can place and enough to cover them all. -1 if not.
+  function unnamedBy() {
+    var tally = [0, 0, 0, 0], n = 0, who = -1;
+    for (var L = 0; L < 20; L++) if (S.cleared(ram, L)) { if (cleared(L)) tally[clearedBy(L)]++; else n++; }
+    for (var c = 0; c < 4; c++) if (S.charClears(ram, c) > tally[c]) { if (who >= 0) return -1; who = c; }
+    return who >= 0 && S.charClears(ram, who) - tally[who] >= n ? who : -1;
+  }
   function popcount(v) { var n = 0; while (v) { n += v & 1; v >>>= 1; } return n; }
 
   // ------------------------------------------------------------------ video helpers (live VRAM / palette / OAM / IO)
@@ -153,9 +176,9 @@
   // most of it, as the 3D view does. Cached per video update.
   var skyMemo = { v: null, rgb: null };
   function skyRgb() {
-    var c = palRgb(0);
-    if (c[0] + c[1] + c[2] > 690) return [184, 228, 248];
-    if (c[0] + c[1] + c[2] >= 150 || !video) return c;
+    var c = palRgb(0), pot = ram && S.pot(ram);          // 0.34: in a pot colour 0 is left over from outside; its picture is the sky
+    if (!pot && c[0] + c[1] + c[2] > 690) return [184, 228, 248];
+    if ((!pot && c[0] + c[1] + c[2] >= 150) || !video) return c;
     if (skyMemo.v !== video) { skyMemo.v = video; skyMemo.rgb = farSky(); }
     return skyMemo.rgb || c;
   }
@@ -263,12 +286,14 @@
   // Which way the area runs and where it sits in the level buffer (0.22). The game's vertical flag (0300116F) is set
   // late after entering an area (1-1 opens with it clear while you fall down a vertical area), so, as in the 3D view,
   // the layout is the one whose level data matches BG0's tile map; until a picture settles it, a player below the first
-  // 15 rows means vertical and one right of the first screen means horizontal. Subspace is one more page after the
-  // area's last (the player is at x >= pages * 256 there), so the map shows just that page.
+  // 15 rows means vertical and one right of the first screen means horizontal. Subspace, and a pot with no area of its own,
+  // are on the level buffer's last page, page 10 (the player is at x >= pages * 256 there), so the map shows just that page.
   var geo = { vert: false, pages: 1, page0: 0 }, layoutMemo = { key: '', vid: null, vert: null };
   function updateGeo() {
     var pages = S.pages(ram), px = S.px(ram), py = S.py(ram), flag = S.vertical(ram);
     if (px >> 8 >= pages && px >> 8 <= 10) { geo = { vert: false, pages: 1, page0: px >> 8 }; return; }
+    var runs = areaRuns();
+    if (runs != null) { geo = { vert: runs, pages: pages, page0: 0 }; return; }
     var key = S.level(ram) + '/' + S.area(ram) + '/' + pages;
     if (layoutMemo.key !== key) layoutMemo = { key: key, vid: null, vert: null };
     if (video && lvl && meta && layoutMemo.vid !== video && S.playing(ram)) {
@@ -315,19 +340,155 @@
   }
   function cellId(c, r) { return cellAt(geo.vert, geo.pages, geo.page0, c, r); }
   function areaSize() { return geo.vert ? [16, geo.pages * 15] : [geo.pages * 16, 15]; }
+  // 0.37: the game's own background behind the map: its far layers (BG2 under BG1) over the sky, at the same scale as the level.
+  // The layers scroll slower than the level, so there is no one place for them in the area: they tile at the level's scale. Their
+  // maps are a ring the game streams into as the camera moves, so, as in the 3D view (Scene3D.farCol), only columns that have been
+  // on screen are good and the rest take the column half a ring over; a sparse layer (the clouds) leaves those empty rather than
+  // cut shapes off. In a vertical area it is the rows that stream. A pot's BG1 is one picture lying under the pot's outline, so it
+  // keeps its place, with black round it. With no far layers on (Subspace) the map keeps the plain sky.
+  var farMem = { key: '', n: 0 }, farBg = { key: '', data: null };
+  function farLayers() {
+    var disp = vu16(V_IO), out = [];
+    [1, 2].forEach(function (b) {
+      if (!(disp & (0x100 << b))) return;
+      var cnt = vu16(V_IO + 8 + b * 2);
+      if (cnt & 0x80) return;
+      out.push({ b: b, cnt: cnt, pri: cnt & 3, cb: (cnt >> 2) & 3, w: cnt & 0x4000 ? 512 : 256, h: cnt & 0x8000 ? 512 : 256,
+                 hx: vu16(V_IO + 0x10 + b * 4) & 511, vy: vu16(V_IO + 0x12 + b * 4) & 511 });
+    });
+    return out.sort(function (a, c) { return c.pri - a.pri || c.b - a.b; });   // back first
+  }
+  function markFar() {
+    var cam = camera(), rx = cam[0] - geo.page0 * 256, ry = cam[1];
+    var key = S.level(ram) + '/' + S.areaNo(ram) + '/' + S.area(ram) + '/' + geo.vert + '/' + geo.page0;
+    if (farMem.key !== key) farMem = { key: key, n: 0, cols: {}, rows: {}, dx: {}, dy: {}, ry: ry };
+    farLayers().forEach(function (l) {
+      var nc = l.w >> 3, nr = l.h >> 3, cols = farMem.cols[l.b] || (farMem.cols[l.b] = new Uint8Array(nc)), rows = farMem.rows[l.b] || (farMem.rows[l.b] = new Uint8Array(nr)), k;
+      for (k = l.hx >> 3; k <= (l.hx + 239 + (geo.vert ? 0 : 16)) >> 3; k++) if (!cols[k & (nc - 1)]) { cols[k & (nc - 1)] = 1; farMem.n++; }
+      for (k = l.vy >> 3; k <= (l.vy + 159) >> 3; k++) if (!rows[k & (nr - 1)]) { rows[k & (nr - 1)] = 1; farMem.n++; }
+      // A scrolling layer keeps the place it had when first seen. A pot's picture lies under the outline, so it follows the scroll
+      // every time: the first look can come while the screen is still changing over, which left it a page off with black beside it.
+      if (farMem.dy[l.b] == null || (S.pot(ram) && (farMem.dy[l.b] !== l.vy - ry || farMem.dx[l.b] !== l.hx - rx))) {
+        farMem.dy[l.b] = l.vy - ry; farMem.dx[l.b] = l.hx - rx; farMem.n++;
+      }
+    });
+  }
+  function tileEmpty(cb, t) {
+    var o = cb * 0x4000 + t * 32; if (o + 32 > 0x10000) return true;
+    for (var i = 0; i < 32; i++) if (video[o + i]) return false;
+    return true;
+  }
+  function farSparse(l) {                                 // BG2 across a horizontal area, unless it fills the screen (7-1's sky)
+    if (l.b !== 2 || geo.vert) return false;
+    var n = 0, full = 0;
+    for (var sy = 4; sy < 160; sy += 16) for (var sx = 4; sx < 240; sx += 16) { n++; if (!tileEmpty(l.cb, bgEntry(l.cnt, l.w, l.h, l.hx + sx, l.vy + sy) & 0x3FF)) full++; }
+    return full * 10 < n * 9;
+  }
+  /** The game's sky gradient (palette colour 0, rewritten by scanline from a table), as 160 rows, or null if it's flat. */
+  var SKY_ROWS = [0, 8, 16, 24, 32, 38, 44, 50, 56, 64, 68, 72, 76, 80, 84, 87];
+  function skyGradient() {
+    var hex = Native.mem(S.SKY_TABLE.toString(16) + ':32'); if (hex.length !== 64) return null;
+    var t = S.hexBytes(hex), e = function (i) { return t[i * 2] | t[i * 2 + 1] << 8; }, flat = true;
+    for (var i = 1; i < 16; i++) if (e(i) !== e(0)) flat = false;
+    if (flat || e(15) !== vu16(V_PAL)) return null;
+    var out = [];
+    for (var k = 0; k < 16; k++) {
+      var c = e(k), r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31, rgb = [r << 3 | r >> 2, g << 3 | g >> 2, b << 3 | b >> 2];
+      for (var y = SKY_ROWS[k]; y < (k < 15 ? SKY_ROWS[k + 1] : 160); y++) out[y] = rgb;
+    }
+    return out;
+  }
+  function farData(w, h) {
+    if (!farMem.cols) return null;
+    var layers = farLayers(); if (!layers.length) return null;
+    var pal = 0, j; for (j = 0; j < 0x200; j++) pal = (pal * 31 + video[V_PAL + j]) | 0;
+    var key = farMem.key + '/' + w + 'x' + h + '/' + farMem.n + '/' + pal;
+    if (farBg.key === key) return farBg.data;
+    var d = new Uint8ClampedArray(w * h * 4), pot = S.pot(ram), c0 = palRgb(0), base = pot ? [0, 0, 0] : c0[0] + c0[1] + c0[2] > 690 ? c0 : skyRgb(), grad = pot ? null : skyGradient();
+    // the gradient is locked to the screen: across an area it can stand where the sky is, but down a tall one it has no place
+    var flat = grad && geo.vert ? grad[80] : null;
+    for (var y = 0; y < h; y++) {
+      var rgb = flat || (grad ? grad[Math.max(0, Math.min(159, y - farMem.ry))] : base);
+      for (var o = y * w * 4, e4 = o + w * 4; o < e4; o += 4) { d[o] = rgb[0]; d[o + 1] = rgb[1]; d[o + 2] = rgb[2]; d[o + 3] = 255; }
+    }
+    var cols256 = []; for (j = 0; j < 256; j++) cols256.push(palRgb(j));
+    layers.forEach(function (l) {
+      var nc = l.w >> 3, nr = l.h >> 3, seenC = farMem.cols[l.b], seenR = farMem.rows[l.b]; if (!seenC) return;
+      var dy = farMem.dy[l.b], dx = pot ? farMem.dx[l.b] : 0, sparse = farSparse(l), last = Math.max(27, (l.vy + 159) >> 3), vert = geo.vert;
+      var scr0 = l.vy >> 3, scr1 = (l.vy + 159) >> 3;
+      var colOf = function (tx) {
+        if (pot) return tx;
+        var c = tx & (nc - 1), f = vert ? 30 : 32, o;
+        if (seenC[c]) return c;
+        if (sparse) return -1;
+        o = (c + f) & (nc - 1); if (seenC[o]) return o;
+        o = (c - f) & (nc - 1); if (seenC[o]) return o;
+        o = (c + 30) & (nc - 1); if (seenC[o]) return o;
+        o = (c - 30) & (nc - 1); return seenC[o] ? o : -1;
+      };
+      var rowOf = function (tr, col) {
+        if (pot) return tr;
+        if (vert) {
+          var r = tr & (nr - 1);
+          for (var k = 0; k < 9; k++) { var q = (r + k * 20) & (nr - 1); if (seenR[q]) return q; }
+          return -1;
+        }
+        if (tr > last) return last - 3 + (tr - last - 1) % 4;
+        if (tr >= 0) return tr;
+        return tileEmpty(l.cb, bgEntry(l.cnt, l.w, l.h, col * 8, 0) & 0x3FF) ? -1 : ((tr % 8) + 8) % 8;
+      };
+      var offY = pot || !vert ? dy : 0;
+      var tr0 = pot ? 0 : vert ? 0 : Math.floor(offY / 8), tr1 = pot ? 27 : Math.floor((h - 1 + offY) / 8);
+      var tx1 = pot ? 31 : vert ? (w - 1) >> 3 : Math.min((w - 1) >> 3, 63);            // across an area it repeats: copied below
+      for (var tr = tr0; tr <= tr1; tr++) for (var tx = 0; tx <= tx1; tx++) {
+        var col = colOf(tx), row = col < 0 ? -1 : rowOf(tr, col); if (row < 0) continue;
+        var e = bgEntry(l.cnt, l.w, l.h, col * 8, row * 8), bo = l.cb * 0x4000 + (e & 0x3FF) * 32;
+        if (bo + 32 > 0x10000) continue;
+        if (!pot && (e === 0xA0 || e === 0xA1) && (row < scr0 || row > scr1)) continue;   // the game's fill: never written
+        var mx = tx * 8 - dx, my = tr * 8 - offY, hf = e & 0x400, vf = e & 0x800, pl = (e >> 12) * 16;
+        for (var yy = 0; yy < 8; yy++) {
+          var py = my + yy; if (py < 0 || py >= h) continue;
+          var sy = vf ? 7 - yy : yy;
+          for (var xx = 0; xx < 8; xx++) {
+            var px = mx + xx; if (px < 0 || px >= w) continue;
+            var sx = hf ? 7 - xx : xx, b = video[bo + sy * 4 + (sx >> 1)], v = (sx & 1) ? b >> 4 : b & 15;
+            if (!v) continue;
+            var c = cols256[pl + v], q = (py * w + px) * 4;
+            d[q] = c[0]; d[q + 1] = c[1]; d[q + 2] = c[2];
+          }
+        }
+      }
+    });
+    if (!pot && !geo.vert && w > 512) for (var ry = 0; ry < h; ry++) {
+      var r0 = ry * w * 4;
+      for (var rx = 512; rx < w; rx += 512) d.copyWithin(r0 + rx * 4, r0, r0 + Math.min(512, w - rx) * 4);
+    }
+    farBg = { key: key, data: d, w: w, h: h, top: flat || (grad ? grad[0] : base), c: null, sc: 0 };
+    return d;
+  }
+  /** The background alone at a map scale, to carry on past the area's sides when the pane is wider than it (cached per build). */
+  function farStrip(sc) {
+    if (!farBg.data) return null;
+    if (farBg.c && farBg.sc === sc) return farBg.c;
+    var c = document.createElement('canvas'); c.width = farBg.w; c.height = farBg.h;
+    c.getContext('2d').putImageData(new ImageData(farBg.data, farBg.w, farBg.h), 0, 0);
+    farBg.c = sc === 1 ? c : resample(c, sc); farBg.sc = sc;
+    return farBg.c;
+  }
   function buildArea() {
     if (!lvl || !video || !meta) return;
     var sz = areaSize(), sum = 0;
     for (var i = 0; i < sz[0] * sz[1] * 2 && i < lvl.length; i += 3) sum = (sum * 31 + lvl[i]) | 0;
     var qm = S.quadMode(ram);
-    var key = S.level(ram) + '/' + S.area(ram) + '/' + sz + '/' + geo.page0 + '/' + sum + '/' + lastVidKey() + '/' + qm;
+    var key = S.level(ram) + '/' + S.area(ram) + '/' + sz + '/' + geo.page0 + '/' + sum + '/' + lastVidKey() + '/' + qm + '/' + farMem.n;
     if (key === areaKey && areaCv) return;
     areaKey = key;
     var w = sz[0] * 16, h = sz[1] * 16;
     areaCv = document.createElement('canvas'); areaCv.width = w; areaCv.height = h;
     var x2 = areaCv.getContext('2d'), img = x2.createImageData(w, h), d = img.data;
-    var cb = (vu16(V_IO + 8) >> 2) & 3, bgc = skyRgb();
-    for (var k = 0; k < w * h; k++) { d[k * 4] = bgc[0]; d[k * 4 + 1] = bgc[1]; d[k * 4 + 2] = bgc[2]; d[k * 4 + 3] = 255; }
+    var cb = (vu16(V_IO + 8) >> 2) & 3, bgc = skyRgb(), far = window.STANDIN ? null : farData(w, h);
+    if (far) d.set(far);
+    else for (var k = 0; k < w * h; k++) { d[k * 4] = bgc[0]; d[k * 4 + 1] = bgc[1]; d[k * 4 + 2] = bgc[2]; d[k * 4 + 3] = 255; }
     var palCache = {};
     for (var r = 0; r < sz[1]; r++) for (var c = 0; c < sz[0]; c++) {
       if (window.STANDIN) { standinCell(d, w, c, r, cellId(c, r)); continue; }    // test previews without game art
@@ -360,24 +521,136 @@
 
   // ------------------------------------------------------------------ drawing
   function draw() {
-    loadKit();
+    gl3d = null;
+    drawPage();
+    if (LINK) sync3d();
+  }
+  function drawPage() {
+    loadKit(); applyTheme();
     if (!ram || !romOk) { ctx.fillStyle = C.night; ctx.fillRect(0, 0, W, H); } else backdrop();
     buttons = []; mapBox = null; optPane = null;
-    if (!ram || !romOk) { idle(); return; }
+    if (!ram || !romOk) { if (LINK) linkIdle(); else idle(); return; }
     if (endPreview || S.ending(ram)) { endingCard(); return; }
+    var menus = S.gameMode(ram) !== 3 && S.gameMode(ram) !== 4, quiet = quietNow();
+    if (quietOpen && (!quiet || (menus && tab !== 'options'))) {   // the game moved on, or on the menus another tab was picked: back to the logo
+      quietOpen = false;
+      if (!quiet && tab === 'options') tab = quietTab;
+    }
+    if (quiet && !quietOpen) { quietScreen(); return; }
     if (S.gameMode(ram) === 4) { marioBros(); drawTabs(); return; }
     if (S.bonusChance(ram)) { bonusChance(); drawTabs(); return; }
     if (!S.inLevel(ram) && !trk) { idle('TITLE SCREEN', 'PICK A FILE AND PLAY'); return; }
-    if (!layout.small || tab === 'status') { blockA(layout.a.x, layout.a.y); blockB(layout.b.x, layout.b.y); }
+    var wide3d = tab === '3d' && W >= 300;                 // beside the status column there'd be little left: the view takes the width
+    if ((!layout.small && !wide3d) || tab === 'status') { blockA(layout.a.x, layout.a.y); blockB(layout.b.x, layout.b.y, layout.bh); }
     if (tab !== 'status') {
       var p = layout.pane;
       if (tab === 'map') drawMap(p);
       else if (tab === 'chart') drawChart(p);
       else if (tab === 'options') drawOptions(p);
+      else if (tab === '3d') draw3dTab();
     }
     drawTabs();
   }
 
+  // ------------------------------------------------------------------ Link only: the setup screen and the 3D tab
+  // Dual draws the 3D view on the game's own screen. Link's game screen is RetroArch's, which it can't draw on, so the view
+  // comes here: a tab, off until it's switched on in OPTIONS. The picture is a GL view the app lays over this part of the
+  // page (LinkActivity.Bridge.view3d, Dual's Scene3D and Renderer3D fed from RetroArch's memory), with the cameras under it.
+  // Tapping the picture steps the camera, as the map's zoom does. Away from play (a door, a pause) the last frame stays up.
+  var gl3d = null, glShown = '', s3d = null, CAMS = ['low', 'tilt', 'diorama', 'far'];
+  function settings3d() { if (!s3d) { try { s3d = JSON.parse(Native.settings3d()); } catch (e) { s3d = { cam3d: 'tilt', depth3d: 16, back3d: 'near' }; } } return s3d; }
+  function set3d(k, v) { settings3d()[k] = v; Native.set3d(k, String(v)); }
+  function nextCam() { set3d('cam3d', CAMS[(CAMS.indexOf(settings3d().cam3d) + 1) % CAMS.length]); }
+  window.on3dTap = function () { nextCam(); draw(); };
+  function draw3dTab() {
+    var r = H >= 300 ? layout.pane : { x: 0, y: 0, w: W, h: layout.tabY - 1 }, barH = 14, s = settings3d();
+    if (!S.inLevel(ram)) {                                 // character select with the tabs opened from the logo
+      card(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
+      G.textC(ctx, '3D VIEW', r.x + r.w / 2, r.y + r.h / 2 - 12, C.title);
+      G.textC(ctx, 'SHOWS DURING A LEVEL', r.x + r.w / 2, r.y + r.h / 2 + 2, T.muted);
+      return;
+    }
+    gl3d = { x: r.x, y: r.y, w: r.w, h: r.h - barH };
+    var by = r.y + r.h - barH, bw = Math.floor(r.w / CAMS.length);
+    ctx.fillStyle = C.edge; ctx.fillRect(r.x, by, r.w, barH);
+    CAMS.forEach(function (c, i) {
+      var x = r.x + i * bw, on = s.cam3d === c;
+      rrect(x + 1, by + 1, bw - 2, barH - 1, on ? C.cream : C.parch);
+      if (on) { ctx.fillStyle = themed ? C.orange : C.blue; ctx.fillRect(x + 2, by + 1, bw - 4, 2); }
+      G.textC(ctx, c.toUpperCase(), x + bw / 2, by + 4, on ? C.dbrown : C.brown);
+      buttons.push({ x: x, y: by, w: bw, h: barH, fn: function () { set3d('cam3d', c); } });
+    });
+  }
+  function sync3d() {
+    var k = gl3d ? [gl3d.x / W, gl3d.y / H, gl3d.w / W, gl3d.h / H].join() : '';
+    if (k === glShown) return;
+    glShown = k;
+    if (gl3d) Native.view3d(true, gl3d.x / W, gl3d.y / H, gl3d.w / W, gl3d.h / H); else Native.view3d(false, 0, 0, 0, 0);
+  }
+  var RA_WHY = { norom: ['CHOOSE YOUR ROM', 'FOR THE MAP AND THE ART'], badrom: ['THAT ROM IS NOT THIS GAME', 'NEEDS THE USA, EUROPE ROM'],
+                 noreply: ['NO REPLY FROM RETROARCH', ''], nogame: ['RETROARCH: NO GAME RUNNING', 'LOAD SUPER MARIO ADVANCE'],
+                 wrong: ['RETROARCH RUNS ANOTHER GAME', 'LOAD SUPER MARIO ADVANCE'], nomap: ['THIS CORE HAS NO MEMORY MAP', 'USE THE MGBA CORE'],
+                 '': ['WAITING FOR THE GAME', ''] };
+  function linkIdle() {
+    var p = window.Native && Native.problem ? Native.problem() : '', why = RA_WHY[p] || RA_WHY[''], cy = Math.max(3, Math.floor(H / 2) - 86);
+    starfield();
+    G.textC(ctx, 'SUPER MARIO ADVANCE', W / 2, cy, C.yellow);
+    G.textC(ctx, 'LINK FOR RETROARCH', W / 2, cy + 10, C.lblue);
+    G.textC(ctx, why[0], W / 2, cy + 26, p ? C.red : C.white);
+    if (why[1]) G.textC(ctx, why[1], W / 2, cy + 36, C.grey);
+    var x = Math.max(2, Math.floor((W - 27 * 8) / 2)), y = cy + 50;
+    [['USE RETROARCH NIGHTLY', C.yellow], ['1 SETTINGS > NETWORK >', C.white], ['  NETWORK COMMANDS: ON', C.white], ['2 COMMAND PORT: 55355', C.white],
+     ['3 CORE: MGBA', C.white], ['4 LOAD SUPER MARIO ADVANCE', C.white]].forEach(function (l) { G.text(ctx, l[0], x, y, l[1]); y += 10; });
+    var bw = Math.min(150, W - 16), bh = 18, rom = !!(Native.romName && Native.romName());
+    button(rom ? 'CHOOSE ANOTHER ROM' : 'CHOOSE ROM', Math.floor((W - bw) / 2), Math.min(H - bh - 12, y + 3), bw, bh, !rom, function () { Native.pickRom(); });
+    var v = Native.raVersion ? Native.raVersion() : '';
+    if (v) G.textC(ctx, 'RETROARCH ' + v.substr(0, 16), W / 2, H - 9, C.grey);
+  }
+
+  // 0.34: while the game is on its own menus (the title, Choose a Game, the file screens) there is nothing to show here, so
+  // the screen goes quiet: the game's logo, dimmed and centred, as Xenogears Dual does in cutscenes. Tapping it opens the
+  // OPTIONS tab there too (the save states), which is how Xenogears Dual's logo opens its settings. The logo comes from the
+  // ROM, so it is there from the first start.
+  // 0.42: on the app's own look rather than black, as Xenogears keeps its background: the backdrop and a window, dimmed. No tabs,
+  // as Xenogears drops its bars here.
+  // 0.41: character select and the screens from there into a level too (the Yoshi Challenge's and the level's card, then the
+  // level's first frames, sub-mode 1 state 0). A door or a lost life runs state 0 as well, so that only counts straight after
+  // these screens. There's a file loaded here, so after the tap every tab works, until the level starts.
+  var logoCv = null, quietOpen = false, quietTab = null, quietLoad = false;
+  function quietNow() {
+    var mode = S.gameMode(ram), sub = S.subMode(ram);
+    if (mode !== 3) { quietLoad = false; return mode !== 4; }
+    if (sub === 1) { if (S.mainState(ram) !== 0) quietLoad = false; return quietLoad; }
+    if (sub === 2 || sub === 4) { quietLoad = false; return false; }    // Bonus Chance and the ending have their own screens
+    return quietLoad = true;
+  }
+  function logoImage() {
+    if (logoCv || !romOk || window.STANDIN) return logoCv;
+    var tiles = G.b64(Native.rom(S.LOGO_TILES, S.LOGO_TILES_LEN)), map = G.b64(Native.rom(S.LOGO_MAP, S.LOGO_MAP_LEN)), pal = G.b64(Native.rom(S.LOGO_PAL, 512));
+    if (tiles.length !== S.LOGO_TILES_LEN || map.length !== S.LOGO_MAP_LEN || pal.length !== 512) return null;
+    var box = S.LOGO_BOX, c = document.createElement('canvas'); c.width = box[2]; c.height = box[3];
+    var x2 = c.getContext('2d'), img = x2.createImageData(box[2], box[3]), p = img.data;
+    for (var y = 0; y < box[3]; y++) for (var x = 0; x < box[2]; x++) {
+      var mx = x + box[0], my = y + box[1], o = ((my >> 3) * 32 + (mx >> 3)) * 2, e = map[o] | map[o + 1] << 8;
+      var ix = e & 0x400 ? 7 - (mx & 7) : mx & 7, iy = e & 0x800 ? 7 - (my & 7) : my & 7, v = tiles[(e & 0x3FF) * 64 + iy * 8 + ix];
+      if (!v) continue;
+      var col = pal[v * 2] | pal[v * 2 + 1] << 8, q = (y * box[2] + x) * 4, r = col & 31, g = (col >> 5) & 31, b = (col >> 10) & 31;
+      p[q] = r << 3 | r >> 2; p[q + 1] = g << 3 | g >> 2; p[q + 2] = b << 3 | b >> 2; p[q + 3] = 255;
+    }
+    x2.putImageData(img, 0, 0);
+    return logoCv = c;
+  }
+  function quietScreen() {
+    card(4, 4, W - 8, H - 8);                             // on the backdrop draw() has just painted
+    var im = logoImage();
+    if (im) ctx.drawImage(im, Math.floor((W - im.width) / 2), Math.floor((H - im.height) / 2));
+    else {                                                // a stand-in preview: no game art
+      G.textC(ctx, 'SUPER MARIO', W / 2, H / 2 - 18, C.red, 2);
+      G.textC(ctx, 'ADVANCE', W / 2, H / 2, C.yellow, 2);
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);   // the logo isn't see-through: the page dims as one
+    buttons.push({ x: 0, y: 0, w: W, h: H, fn: function () { quietOpen = true; quietTab = tab; tab = 'options'; optScroll = 0; } });
+  }
   var stars = [];
   for (var s = 0; s < 50; s++) stars.push([Math.random(), Math.random(), Math.floor(Math.random() * 3)]);
   function starfield() {
@@ -398,22 +671,34 @@
     G.textC(ctx, subOverride || (!romOk ? 'CHOOSE THE ROM IN THE MENU' : 'START THE GAME'), W / 2, cy + 70, C.grey);
   }
 
-  // Cards in the style of SMA's pause panel: dark outline, orange ring, cream body, soft shadow, rounded corners.
   function rrect(x, y, w, h, col) { ctx.fillStyle = col; ctx.fillRect(x + 1, y, w - 2, h); ctx.fillRect(x, y + 1, w, h - 2); }
-  // 0.8: calm cards — cream body, one thin warm-brown outline, a faint shadow; dark ink for text.
+  // 0.31: the windows are the game's own: the pause panel's pieces (scalloped edge, corner pins) from the first-start
+  // capture, as the pause menu uses, and its palette for the words (see applyTheme). They were flat cream cards with a brown
+  // line, close to the game but not it. x, y, w, h is the panel's body; the pins stick out 3 px, and the scallops reach
+  // 6 px in, so content keeps inside that. Until the capture is there: the drawn card in the same place.
+  var panels = {};
   function card(x, y, w, h) {
+    if (K.ok && K.piece) {
+      var key = w + 'x' + h, c = panels[key];
+      if (!c) {
+        c = panels[key] = document.createElement('canvas'); c.width = w + 6; c.height = h + 6;
+        K.card(c.getContext('2d'), 0, 0, w + 6, h + 6);
+      }
+      ctx.drawImage(c, x - 3, y - 3);
+      return;
+    }
     rrect(x, y + 1, w + 2, h + 2, 'rgba(40,24,8,0.18)');
-    rrect(x - 1, y - 1, w + 2, h + 2, '#9a7048');
-    rrect(x, y, w, h, '#fbf4dc');
+    rrect(x - 1, y - 1, w + 2, h + 2, C.edge);
+    rrect(x, y, w, h, C.cream);
   }
-  // section header: red words with a thin line under them
-  function ribbon(t, x, y, col) {
-    G.text(ctx, t, x, y, '#a82a1a');
-    ctx.fillStyle = '#d8b878'; ctx.fillRect(x, y + 9, t.length * 8, 1);
+  // section header: words with a thin line under them
+  function ribbon(t, x, y) {
+    G.text(ctx, t, x, y, C.title);
+    ctx.fillStyle = C.line; ctx.fillRect(x, y + 9, t.length * 8, 1);
   }
-  // blend a colour toward cream (k = how much of the colour stays)
+  // blend a colour toward the card's cream (k = how much of the colour stays)
   function soft(col, k) {
-    var n = parseInt(col.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255], b = [251, 244, 220];
+    var n = parseInt(col.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255], m = parseInt(C.cream.slice(1), 16), b = [m >> 16, (m >> 8) & 255, m & 255];
     return '#' + ((1 << 24) | c.map(function (v, i) { return Math.round(b[i] + (v - b[i]) * k); }).reduce(function (a, v) { return a * 256 + v; }, 0)).toString(16).slice(1);
   }
   // Background: the title screen's sky and ground from the first-start capture (menu/gbakit.js) when there is one,
@@ -425,8 +710,21 @@
     kitTried++;
     try { var b = Native.kit(); if (b) K.load(G.b64(b)); } catch (e) {}
   }
+  // The pause panel's own colours for the words and the bits around them. Its words are one solid orange (ef9452, tiles
+  // 779-810); that is too faint for small print, so labels take the panel's deep orange (ad5210, 5:1 on its cream) and values
+  // its darkest (943900, 7:1), with the plain orange for big titles. They were red, blue and green labels with a darker
+  // second tone in each letter (gbagfx's shade), which the game's windows never have: see G.solid.
+  var themed = false;
+  function applyTheme() {
+    if (themed || !K.ok || !K.colors) return;
+    themed = true;
+    var k = K.colors;
+    C.cream = k.cream; C.parch = k.parch; C.orange = k.orange; C.brown = k.brown; C.dbrown = k.dark;
+    C.edge = k.brown; C.line = k.light; C.title = k.brown; C.big = k.orange;
+    T.muted = k.brown; T.blue = k.dark; T.gold = k.dark;
+  }
   function backdrop() {
-    if (K.ok) { K.backdrop(ctx, W, H); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(0, 0, W, H); return; }
+    if (K.ok) { K.backdrop(ctx, W, H); return; }
     var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#9cc8ec'); g.addColorStop(1, '#e2f2f8');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     var hy = H - 26;
@@ -456,70 +754,71 @@
   function bar(x, y, w, v, col) { ctx.fillStyle = C.parch; ctx.fillRect(x, y + 1, w, 5); ctx.fillStyle = col; ctx.fillRect(x, y + 1, Math.max(1, Math.round(w * Math.min(1, v))), 5); }
 
   // An item icon from the first-start capture (16x16, drawn 1:1) or, when there is none, the drawn fallback.
-  // alpha < 1 = an empty slot (cherry / Ace Coin not taken yet): the icon's silhouette in a soft tan, so the slot keeps
-  // a clear shape without competing with the ones you have.
+  // alpha < 1 = an empty slot (cherry / Ace Coin / egg not taken yet): the real icon, dimmed. 0.31; a tan silhouette before
+  // that lost what made the cherry a cherry.
   function icon(name, x, y, alpha, fallback) {
-    if (alpha != null && alpha < 1) { var c = iconAt(name, 16); if (c) { ctx.drawImage(shadowOf(c, '#d6c49c'), x, y); return true; } }
-    if (!drawIcon(name, x, y, 16)) { if (fallback) fallback(); return false; } return true;
+    if (!drawIcon(name, x, y, 16, alpha)) { if (fallback) fallback(); return false; } return true;
   }
   function blockA(x, y) {
-    card(x, y, 116, A_H);
-    var lv = S.level(ram), name = lv <= 19 ? S.LEVELS[lv] : '-';
+    card(x, y, A_W, A_H);
+    var lv = S.level(ram), name = lv <= 19 ? S.LEVELS[lv] : '-', rx = x + A_W - 8;
     var ch = S.charSelect(ram) ? S.cursorChar(ram) : S.character(ram), band = soft(S.CHAR_COL[ch], 0.3);   // 0.23: follows the select cursor
-    rrect(x + 1, y + 1, 114, 11, band);
-    G.text(ctx, 'WORLD', x + 4, y + 3, '#4a2c12'); G.text(ctx, name, x + 46, y + 3, '#a82a1a');
+    rrect(x + 5, y + 5, A_W - 10, 11, band);
+    G.text(ctx, 'WORLD', x + 8, y + 7, C.brown); G.text(ctx, name, x + 50, y + 7, C.dbrown);
     var where = S.subspace(ram) ? 'SUB' : 'A' + (S.areaNo(ram) + 1);
-    G.textR(ctx, where, x + 113, y + 3, '#4a2c12');
+    G.textR(ctx, where, rx, y + 7, C.brown);
     var pic = portraitFor();
-    if (pic) ctx.drawImage(pic, x + 2, y + 14); else portraitHolder(x + 6, y + 18);
-    G.text(ctx, S.CHARS[ch], x + 38, y + 15, CHAR_TEXT[ch]);
-    G.textR(ctx, 'x' + S.lives(ram), x + 113, y + 15, C.brown);
+    if (pic) ctx.drawImage(pic, x + 3, y + 16); else portraitHolder(x + 7, y + 20);
+    G.text(ctx, S.CHARS[ch], x + 40, y + 18, CHAR_TEXT[ch]);
+    G.textR(ctx, 'x' + S.lives(ram), rx, y + 18, C.brown);
     var hp = S.health(ram);                                                  // the life meter's own hearts
     for (var i = 0; i < maxHearts; i++) (function (i) {
-      icon(i < hp ? 'heartFull' : 'heartEmpty', x + 35 + i * 12, y + 24, 1, function () { heart(x + 38 + i * 10, y + 28, i < hp); });
+      icon(i < hp ? 'heartFull' : 'heartEmpty', x + 37 + i * 12, y + 27, 1, function () { heart(x + 40 + i * 10, y + 31, i < hp); });
     })(i);
-    G.text(ctx, pad(S.score(ram), 8), x + 38, y + 42, C.dbrown);
+    G.text(ctx, pad(S.score(ram), 8), x + 40, y + 45, C.dbrown);
     var ch2 = Math.min(5, S.cherries(ram));                                  // cherries toward the star: 5 slots
     for (var k = 0; k < 5; k++) (function (k) {
-      icon('cherry', x + 1 + k * 13, y + 53, k < ch2 ? 1 : 0.28, function () { cherry(x + 4 + k * 10, y + 58, k < ch2); });
+      icon('cherry', x + 5 + k * 13, y + 55, k < ch2 ? 1 : DIM, function () { cherry(x + 8 + k * 10, y + 60, k < ch2); });
     })(k);
-    if (icon('coin', x + 68, y + 53)) G.text(ctx, 'x' + S.coins(ram), x + 84, y + 58, C.brown);
-    else G.text(ctx, 'C' + S.coins(ram), x + 70, y + 58, C.brown);
+    if (icon('coin', x + 71, y + 55)) G.text(ctx, 'x' + S.coins(ram), x + 87, y + 60, C.brown);
+    else G.text(ctx, 'C' + S.coins(ram), x + 73, y + 60, C.brown);
     var ace = lv <= 19 ? S.aceLevel(ram) | S.aceSaved(ram, lv) : 0;      // this visit, or already on the file
     for (var a = 0; a < 5; a++) (function (a) {
       var got = (ace >> a) & 1;
-      icon('ace', x + 1 + a * 15, y + 71, got ? 1 : 0.28, function () { coin(x + 4 + a * 10, y + 75, got, true); });
+      icon('ace', x + 5 + a * 15, y + 72, got ? 1 : DIM, function () { coin(x + 8 + a * 10, y + 76, got, true); });
     })(a);
     if (S.yoshi(ram) && lv <= 19) {                                            // Yoshi Challenge: the level's two eggs
       var ev = S.eggsVisit(ram), ef = S.eggsFile(ram, lv);
       for (var e = 0; e < 2; e++) (function (e) {
         var got = ((ev | ef) >> e) & 1;                                         // this visit, or already on the file
-        icon('egg', x + 80 + e * 17, y + 71, got ? 1 : 0.28, function () {
-          ctx.fillStyle = got ? C.green : '#d8c8a0'; ctx.fillRect(x + 84 + e * 12, y + 72, 7, 9);
+        icon('egg', x + 81 + e * 16, y + 72, got ? 1 : DIM, function () {
+          ctx.fillStyle = got ? C.green : '#d8c8a0'; ctx.fillRect(x + 85 + e * 12, y + 73, 7, 9);
         });
       })(e);
     }
   }
-  function blockB(x, y) {
-    card(x, y, 116, B_H);
+  var DIM = 0.32;                         // an empty slot's icon
+  function blockB(x, y, h) {
+    card(x, y, A_W, h);
+    var lx = x + 7, rx = x + A_W - 7, top = y + Math.floor((h - B_H) / 2);
     var timers = [['STAR', S.star(ram), '#d8a000', 'star', T.gold], ['WATCH', S.stopwatch(ram), C.blue, 'watch', T.blue], ['SUB', S.subspace(ram), C.dred, 'potion', C.dred]];
     var active = timers.filter(function (t) { return t[1] > 0; });
     if (active.length) active.slice(0, 2).forEach(function (a, i) {
-      var tx = x + 2 + i * 57;
-      if (!icon(a[3], tx, y + 2)) G.text(ctx, a[0][0], tx + 4, y + 6, a[4]);
-      bar(tx + 18, y + 6, 36, a[1] / 255, a[2]);
+      var tx = x + 5 + i * 55;
+      if (!icon(a[3], tx, top + 5)) G.text(ctx, a[0][0], tx + 4, top + 9, a[4]);
+      bar(tx + 18, top + 9, 34, a[1] / 255, a[2]);
     });
     else {                                                                   // 0.23: the player's state when no timer runs
       var what = S.gameOver(ram) ? ['GAME OVER', T.red] : S.dying(ram) ? ['OUCH', T.red] : S.charge(ram) >= 60 ? ['POWER JUMP', T.gold]
         : S.holding(ram) ? ['CARRYING', T.muted] : ['READY', T.muted];
-      G.text(ctx, what[0], x + 4, y + 6, what[1]);
+      G.text(ctx, what[0], lx, top + 9, what[1]);
     }
-    var yy = y + 22, secs = trk ? trk.time / 59.7275 : 0;
-    G.text(ctx, 'TIME', x + 4, yy, T.blue); G.textR(ctx, hms(secs), x + 113, yy, C.dbrown);
-    G.text(ctx, 'DEATHS', x + 4, yy + 10, T.red); G.textR(ctx, String(trk ? trk.deaths : 0), x + 113, yy + 10, C.dbrown);
-    if (S.yoshi(ram)) { G.text(ctx, 'EGGS', x + 4, yy + 20, C.dgreen); G.textR(ctx, S.eggTotal(ram) + '/40', x + 113, yy + 20, C.dbrown); }
-    else { G.text(ctx, 'LEVELS', x + 4, yy + 20, C.dgreen); G.textR(ctx, S.clearedCount(ram) + '/20', x + 113, yy + 20, C.dbrown); }
-    G.text(ctx, 'ACE COINS', x + 4, yy + 30, T.red); G.textR(ctx, S.aceTotal(ram) + '%', x + 113, yy + 30, C.dbrown);
+    var yy = top + 24, secs = trk ? trk.time / 59.7275 : 0;
+    G.text(ctx, 'TIME', lx, yy, C.brown); G.textR(ctx, hms(secs), rx, yy, C.dbrown);
+    G.text(ctx, 'DEATHS', lx, yy + 10, C.brown); G.textR(ctx, String(trk ? trk.deaths : 0), rx, yy + 10, C.dbrown);
+    if (S.yoshi(ram)) { G.text(ctx, 'EGGS', lx, yy + 20, C.brown); G.textR(ctx, S.eggTotal(ram) + '/40', rx, yy + 20, C.dbrown); }
+    else { G.text(ctx, 'LEVELS', lx, yy + 20, C.brown); G.textR(ctx, S.clearedCount(ram) + '/20', rx, yy + 20, C.dbrown); }
+    G.text(ctx, S.aceTotal(ram) >= 100 ? 'ACES' : 'ACE COINS', lx, yy + 30, C.brown); G.textR(ctx, S.aceTotal(ram) + '%', rx, yy + 30, C.dbrown);
   }
 
   // ------------------------------------------------------------------ map tab
@@ -638,7 +937,10 @@
   function drawMap(p) {
     card(p.x + 1, p.y + 1, p.w - 2, p.h - 2);
     var gh = hasIcons() ? 18 : 12;                                     // guide line under the map
-    var inner = { x: p.x + 3, y: p.y + 3, w: p.w - 6, h: p.h - 6 - gh };
+    var inner = { x: p.x + 7, y: p.y + 7, w: p.w - 14, h: p.h - 14 - gh };
+    ctx.fillStyle = C.line;                                            // a thin frame, so the map sits in the window
+    ctx.fillRect(inner.x - 1, inner.y - 1, inner.w + 2, 1); ctx.fillRect(inner.x - 1, inner.y + inner.h, inner.w + 2, 1);
+    ctx.fillRect(inner.x - 1, inner.y, 1, inner.h); ctx.fillRect(inner.x + inner.w, inner.y, 1, inner.h);
     mapView(inner, {});
     guide(p, gh);
   }
@@ -648,7 +950,8 @@
     mapBox = inner;
     if (!areaCv || !S.inLevel(ram)) { G.textC(ctx, 'NO MAP HERE', inner.x + inner.w / 2, inner.y + inner.h / 2 - 4, T.muted); return; }
     ctx.save(); ctx.beginPath(); ctx.rect(inner.x, inner.y, inner.w, inner.h); ctx.clip();
-    var sk = skyRgb(); ctx.fillStyle = 'rgb(' + sk.join(',') + ')'; ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
+    var potHere = S.pot(ram), farHere = !window.STANDIN && farBg.top && farMem.cols && farBg.key.indexOf(farMem.key + '/') === 0 && farLayers().length > 0;
+    var sk = potHere ? [0, 0, 0] : farHere ? farBg.top : skyRgb(); ctx.fillStyle = 'rgb(' + sk.join(',') + ')'; ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
     var aw = areaCv.width, ah = areaCv.height, vert = geo.vert, bar = null;
     var px = S.px(ram) - geo.page0 * 256 + 8, py = S.py(ram) + 16;
     // Zoom levels (0.14): FIT = the area's whole height (whole width for vertical areas) fills the pane; WIDE shows 1.5x
@@ -675,6 +978,13 @@
     }
     var ox = Math.round(inner.x - cx * sc), oy = Math.round(inner.y - cy * sc);
     mapScale = sc;
+    if (farHere && !potHere && aw * sc < inner.w) {       // past the area's sides the background carries on (a vertical area's repeats every 240 px)
+      var strip = farStrip(sc), per = Math.round((vert ? 240 : 256) * sc);
+      if (strip) {
+        for (var bl = ox - per; bl + strip.width > inner.x; bl -= per) ctx.drawImage(strip, bl, oy);
+        for (var br = ox + per; br < inner.x + inner.w; br += per) ctx.drawImage(strip, br, oy);
+      }
+    }
     ctx.drawImage(img, ox, oy);
     var toPane = function (wx, wy) { return [ox + wx * sc, oy + wy * sc, sc]; };
     if (vert ? ah > spanY : aw > spanX) bar = vert ? { vert: true, f0: cy / ah, f1: (cy + spanY) / ah, fp: py / ah } : { vert: false, f0: cx / aw, f1: (cx + spanX) / aw, fp: px / aw };
@@ -775,10 +1085,10 @@
   }
   // What's left in this area, under the map: icons with counts when there are icons, else words.
   function guide(p, gh) {
-    var y = p.y + p.h - gh - 1;
+    var y = p.y + p.h - gh - 5;
     if (!S.inLevel(ram) || !lvl) return p.list ? [] : undefined;
     if (p.list && (S.subspace(ram) || !hasIcons())) return [];
-    if (S.subspace(ram)) { G.text(ctx, 'SUBSPACE: PULL GRASS FOR COINS', p.x + 4, y + (gh - 8) / 2 + 1, C.brown); return; }
+    if (S.subspace(ram)) { G.text(ctx, 'SUBSPACE: PULL GRASS FOR COINS', p.x + 8, y + (gh - 8) / 2 + 1, C.brown); return; }
     var sz = areaSize(), byIcon = {}, byName = {}, order = [], cherries = 0, spots = 0;
     for (var r = 0; r < sz[1]; r++) for (var c = 0; c < sz[0]; c++) {
       var t = cellId(c, r);
@@ -805,8 +1115,8 @@
       if (cherries) items.push(['cherry', cherries]);
       Object.keys(byName).forEach(function (n) { items.push([null, byName[n], n]); });
       if (p.list) return items;
-      if (!items.length) { G.text(ctx, 'NOTHING HIDDEN IN THIS AREA', p.x + 4, y + 6, C.brown); return; }
-      var x = p.x + 4, xe = p.x + p.w - 4;
+      if (!items.length) { G.text(ctx, 'NOTHING HIDDEN IN THIS AREA', p.x + 8, y + 6, C.brown); return; }
+      var x = p.x + 8, xe = p.x + p.w - 8;
       for (var i = 0; i < items.length; i++) {
         var it = items[i], label = it[0] ? 'x' + it[1] : it[1] + ' ' + it[2], w = (it[0] ? 17 : 0) + label.length * 8 + 6;
         if (x + w > xe) break;
@@ -820,8 +1130,8 @@
     if (cherries) parts.push(cherries + ' CHERRY');
     if (aceLeft) parts.unshift(aceLeft + ' ACE COIN' + (aceLeft > 1 ? 'S' : ''));
     var msg = parts.length ? 'HERE: ' + parts.slice(0, 3).join(', ') : 'NOTHING HIDDEN IN THIS AREA';
-    var maxc = Math.floor((p.w - 8) / 8);
-    G.text(ctx, msg.length > maxc ? msg.substr(0, maxc) : msg, p.x + 4, y + 2, C.brown);
+    var maxc = Math.floor((p.w - 16) / 8);
+    G.text(ctx, msg.length > maxc ? msg.substr(0, maxc) : msg, p.x + 8, y + 2, C.brown);
   }
 
   // ------------------------------------------------------------------ chart tab
@@ -829,40 +1139,46 @@
   var WORLD_COL = ['#30a030', '#d09030', '#2890e0', '#40b8d8', '#6048b0', '#c07028', '#e05880'];
   function drawChart(p) {
     card(p.x + 1, p.y + 1, p.w - 2, p.h - 2);
-    var cur = S.level(ram), x0 = p.x + 6, y0 = p.y + 6, rowH = Math.max(14, Math.min(20, Math.floor((p.h - 28) / 7)));
-    var colW = Math.floor((p.w - 32) / 3), eggMode = S.yoshi(ram) || S.eggTotal(ram) > 0;
+    // 0.35: who cleared a level is the character's own sprite, its head and shoulders cut to the row, instead of a coloured
+    // line and a legend. The coins go under the level's number to make the room, and the legend's row goes to the sprites.
+    var eggMode = S.yoshi(ram) || S.eggTotal(ram) > 0;
+    var cur = S.level(ram), x0 = p.x + 9, y0 = p.y + 8, rowH = Math.max(14, Math.min(20, Math.floor((p.h - (eggMode ? 34 : 24)) / 7)));
+    var colW = Math.floor((p.w - 40) / 3), sx = colW >= 58 ? 31 : 25, unnamed = unnamedBy();
     for (var w = 0; w < 7; w++) {
       var y = y0 + w * rowH;
-      var wc = soft(WORLD_COL[w], 0.45); rrect(x0 - 2, y, 19, rowH - 3, wc); G.text(ctx, 'W' + (w + 1), x0, y + 2, '#3a2008');
+      var wc = soft(WORLD_COL[w], 0.45); rrect(x0 - 2, y, 19, rowH - 3, wc); G.text(ctx, 'W' + (w + 1), x0, y + Math.floor((rowH - 11) / 2), C.dbrown);
       var n = w === 6 ? 2 : 3;
       for (var i = 0; i < n; i++) {
         var L = S.WORLD_START[w] + i, x = x0 + 22 + i * colW, on = L === cur && S.inLevel(ram);
         if (on) { rrect(x - 3, y - 1, colW - 1, rowH - 1, '#b8862e'); rrect(x - 2, y, colW - 3, rowH - 3, '#f4d27a'); }   // steady, not blinking
-        G.text(ctx, S.LEVELS[L], x, y + 2, on ? C.dred : C.brown);
+        G.text(ctx, S.LEVELS[L], x, y + 1, on ? C.dred : C.brown);
         var got = S.aceSaved(ram, L) | (on ? S.aceLevel(ram) : 0);           // every level's coins from the file's bits
-        if (colW >= 58) for (var a = 0; a < 5; a++) coin(x + 28 + a * 6, y + 3, (got >> a) & 1, false);
-        else if (got) G.text(ctx, String(popcount(got)), x + 26, y + 2, T.red);
+        if (colW >= 58) for (var a = 0; a < 5; a++) coin(x + a * 6, y + 10, (got >> a) & 1, false);
+        else for (var a2 = 0; a2 < 5; a2++) { ctx.fillStyle = (got >> a2) & 1 ? C.red : C.line; ctx.fillRect(x + a2 * 4, y + 11, 3, 3); }
         if (eggMode && colW >= 62) {                                            // the level's two Yoshi eggs (file + this visit), stacked
           var eg = S.eggsFile(ram, L) | (on ? S.eggsVisit(ram) : 0);
-          for (var e = 0; e < 2; e++) { ctx.fillStyle = (eg >> e) & 1 ? C.green : '#d8c8a0'; ctx.fillRect(x + 59, y + 2 + e * 4, 3, 3); }
+          for (var e = 0; e < 2; e++) { ctx.fillStyle = (eg >> e) & 1 ? C.green : '#d8c8a0'; ctx.fillRect(x + 50, y + 3 + e * 5, 4, 4); }
         }
-        if (S.cleared(ram, L)) { ctx.fillStyle = trk && cleared(L) ? S.CHAR_COL[clearedBy(L)] : C.dbrown; ctx.fillRect(x, y + 11, 22, 2); }
-        else if (trk && ((trk.warped >>> L) & 1)) { ctx.fillStyle = C.grey; ctx.fillRect(x, y + 11, 22, 1); }
+        if (S.cleared(ram, L)) {
+          var who = cleared(L) ? clearedBy(L) : unnamed, spr = who >= 0 ? charSprite(who, true, true) : null;
+          if (spr) { var bh = Math.min(rowH - 2, 32 - BUST_TOP[who]); ctx.drawImage(spr, 0, BUST_TOP[who], 16, bh, x + sx, y - 1, 16, bh); }
+          else { ctx.fillStyle = who >= 0 ? S.CHAR_COL[who] : C.dbrown; ctx.fillRect(x + sx + 1, y + 11, 13, 2); }   // cleared before the tracker knew who; no ROM yet
+        }
+        else if (trk && ((trk.warped >>> L) & 1)) { ctx.fillStyle = C.grey; ctx.fillRect(x + sx + 1, y + 11, 13, 1); }
       }
     }
-    var fy = y0 + 7 * rowH + 2;
-    G.text(ctx, 'ACE COINS ' + S.aceTotal(ram) + '/100', x0, fy, T.red);
-    G.textR(ctx, S.clearedCount(ram) + '/20', p.x + p.w - 6, fy, C.dbrown);
-    var lx = x0;
-    S.CHARS.forEach(function (n, i) { ctx.fillStyle = S.CHAR_COL[i]; ctx.fillRect(lx, fy + 13, 8, 2); G.text(ctx, n[0], lx + 10, fy + 10, C.brown); lx += 24; });
-    if (eggMode) G.textR(ctx, 'EGGS ' + S.eggTotal(ram) + '/40', p.x + p.w - 6, fy + 10, C.dgreen);
+    var fy = y0 + 7 * rowH + 1;
+    G.text(ctx, (p.w >= 200 ? 'ACE COINS ' : 'ACES ') + S.aceTotal(ram) + '/100', x0, fy, C.brown);
+    G.textR(ctx, S.clearedCount(ram) + '/20', p.x + p.w - 9, fy, C.dbrown);
+    if (eggMode) G.textR(ctx, 'EGGS ' + S.eggTotal(ram) + '/40', p.x + p.w - 9, fy + 10, C.brown);
   }
+  var BUST_TOP = [5, 0, 5, 1];                            // where each big frame's ink starts (Mario, Peach, Toad, Luigi)
 
   // ------------------------------------------------------------------ Mario Bros. Classic
   function marioBros() {
     var m = S.mb(ram), cx = W / 2, y = Math.max(8, H / 2 - 50);
-    card(cx - 90, y, 180, 92);
-    G.textC(ctx, 'MARIO BROS.', cx, y + 6, T.red, 2);
+    card(cx - 96, y, 192, 92);
+    G.textC(ctx, 'MARIO BROS.', cx, y + 9, C.big, 2);
     G.text(ctx, 'PHASE', cx - 80, y + 32, C.brown); G.textR(ctx, String(m.round), cx + 80, y + 32, C.dbrown);
     G.text(ctx, 'ENEMIES LEFT', cx - 80, y + 44, C.brown); G.textR(ctx, String(m.left), cx + 80, y + 44, C.dbrown);
     G.text(ctx, 'SCORE', cx - 80, y + 56, C.brown); G.textR(ctx, pad(m.score, 6), cx + 80, y + 56, C.dbrown);
@@ -872,8 +1188,8 @@
   // ------------------------------------------------------------------ Bonus Chance and the ending (0.23)
   function bonusChance() {
     var cx = W / 2, y = Math.max(8, H / 2 - 50), spins = S.coins(ram);
-    card(cx - 100, y, 200, 80);
-    G.textC(ctx, 'BONUS CHANCE', cx, y + 6, T.red, 2);
+    card(cx - 108, y, 216, 80);
+    G.textC(ctx, 'BONUS CHANCE', cx, y + 9, C.big, 2);
     G.text(ctx, 'SPINS LEFT', cx - 80, y + 32, C.brown); G.textR(ctx, String(spins), cx + 80, y + 32, C.dbrown);
     G.text(ctx, 'LIVES', cx - 80, y + 44, C.brown); G.textR(ctx, String(S.lives(ram)), cx + 80, y + 44, C.dbrown);
     var msg = S.mainState(ram) === 2 ? 'SPINNING' : spins ? 'PRESS A TO SPIN' : 'NO SPINS LEFT';
@@ -881,7 +1197,7 @@
   }
   // 0.28: the ending card (as Metroid Dual's mission report and Shantae Dual's QUEST COMPLETE). All through the ending
   // and credits (sub-mode 4, up to the wait on THE END) the whole Link screen shows the real date and time, the run's
-  // stats and a field you sign with a finger. The stats are taken once, after the ending's init (stage 1) has set 7-2's
+  // stats and, for most of the screen, a field you sign with a finger. The stats are taken once, after the ending's init (stage 1) has set 7-2's
   // cleared bit. SAVE keeps the run with the signature as a small PNG in localStorage (sma.hall, last 20; nothing shows
   // the list yet). The playtest action opens the card without the ending (toggleEnding), leaving the game alone.
   var report = null, hall = load('sma.hall', []), sigBox = null, drawing = null, endPreview = false;
@@ -895,73 +1211,109 @@
                clock: pad(now.getHours(), 2) + ':' + pad(now.getMinutes(), 2), t: now.getTime(),
                secs: trk ? trk.time / 59.7275 : 0, deaths: trk ? trk.deaths : 0, levels: S.clearedCount(ram), ace: S.aceTotal(ram),
                eggs: S.eggTotal(ram), score: S.score(ram), clears: clears, dev: !!(window.Native && Native.devUsed && Native.devUsed()),
-               saved: false, sig: null, sw: 0, sh: 0 };
+               warps: trk ? popcount(trk.warped) : 0, saved: false, sig: null, sw: 0, sh: 0 };
+  }
+  // A character's standing frame facing right, or left (the sprite's own way), from the ROM, so all four are there even if you
+  // never played one. Without the ROM yet, or in stand-in previews: null, and the caller draws something plain instead.
+  var charSpr = {};
+  function charSprite(c, big, left) {
+    var key = c + (big ? 'b' : 's') + (left ? 'l' : 'r');
+    if (charSpr[key] !== undefined) return charSpr[key];
+    if (!romOk || window.STANDIN) return null;
+    charSpr[key] = null;
+    var sheet = G.b64(Native.rom(S.CHAR_SHEET[c], S.SHEET_LEN)), pal = G.b64(Native.rom(S.CHAR_PAL[c], 32));
+    if (sheet.length !== S.SHEET_LEN || pal.length !== 32) return null;
+    var cols = [null]; for (var i = 1; i < 16; i++) cols.push(G.bgr(pal[i * 2] | pal[i * 2 + 1] << 8));
+    var s = document.createElement('canvas'); s.width = 16; s.height = 32;
+    var x2 = s.getContext('2d');
+    if (!left) { x2.translate(16, 0); x2.scale(-1, 1); }
+    (big ? S.STAND_BIG : S.STAND_SMALL).forEach(function (t, j) {
+      [[0, 0, 0], [1, 8, 0], [32, 0, 8], [33, 8, 8]].forEach(function (e) {
+        G.drawTile(x2, G.decode(sheet, (t + e[0] - S.SHEET_FIRST) * 32), e[1], j * 16 + e[2], cols);
+      });
+    });
+    return charSpr[key] = s;
   }
   function endingCard() {
     var r = report; sigBox = null; if (!r) return;
-    var x = 4, y0 = 4, w = W - 8, h = H - 8, cx = W / 2, px = x + 6, pw = w - 12, y = y0 + 4;
+    var x = 4, y0 = 4, w = W - 8, h = H - 8, cx = W / 2, px = x + 8, pw = w - 16, y = y0 + 6, rh = H >= 240 ? 11 : 9;
     card(x, y0, w, h);
-    var big = H >= 300;                                  // portrait has room for the big title
-    G.textC(ctx, 'SUBCON IS FREE', cx, y, T.red, big ? 2 : 1); y += big ? 20 : 11;
-    G.textC(ctx, r.date + '  ' + r.clock, cx, y, C.dbrown); y += 12;
+    // 0.32: the stats fold into a small block (date, 2 columns, one row of characters) and the rest is for signing
+    G.text(ctx, r.date + ' ' + r.clock, px, y, C.dbrown);
+    if (r.dev) G.textR(ctx, 'DEV CODES', px + pw, y, T.red);
+    y += rh + 1;
     var whole = function (n, of) { return [n + '/' + of, n >= of ? T.green : C.dbrown]; };
-    var rows = [['PLAY TIME', hms(r.secs), C.dbrown], ['DEATHS', String(r.deaths), C.dbrown], ['LEVELS'].concat(whole(r.levels, 20)),
-                ['ACE COINS'].concat(whole(r.ace, 100)), ['SCORE', pad(r.score, 8), C.dbrown]];
-    if (r.eggs) rows.push(['YOSHI EGGS'].concat(whole(r.eggs, 40)));
-    var cols = pw >= 250 ? 2 : 1, gap = 10, colW = Math.floor((pw - gap * (cols - 1)) / cols), per = Math.ceil(rows.length / cols), rh = 10;
+    var rows = [['PLAY TIME', hms(r.secs), C.dbrown], ['LEVELS'].concat(whole(r.levels, 20)), ['DEATHS', String(r.deaths), C.dbrown],
+                ['ACE COINS'].concat(whole(r.ace, 100)), ['SCORE', String(r.score), C.dbrown]];
+    var eggs = ['YOSHI EGGS'].concat(whole(r.eggs, 40));
+    if (r.warps || !r.eggs) rows.push(['WARPS', String(r.warps), C.dbrown]);   // eggs mean the post-game: its slot, unless there were warps too
+    if (r.eggs) rows.push(eggs);
+    var gap = 8, colW = Math.floor((pw - gap) / 2);
     rows.forEach(function (row, i) {
-      var c = Math.floor(i / per), x0 = px + c * (colW + gap), yy = y + (i % per) * rh;
-      var lab = row[0].length * 8 + 8 + row[1].length * 8 > colW ? row[0].replace('PLAY TIME', 'TIME').replace('ACE COINS', 'ACES').replace('YOSHI EGGS', 'EGGS') : row[0];
+      var x0 = px + (i % 2) * (colW + gap), yy = y + Math.floor(i / 2) * rh;
+      var lab = row[0].length * 8 + 8 + row[1].length * 8 > colW ? row[0].replace('PLAY TIME', 'TIME').replace('ACE COINS', 'ACES').replace('YOSHI EGGS', 'EGGS').replace('SCORE', 'PTS') : row[0];
       G.text(ctx, lab, x0, yy, T.muted); G.textR(ctx, row[1], x0 + colW, yy, row[2]);
     });
-    y += per * rh + 2;
-    // each character's levels cleared with the MVP in gold, the MVP stage's order and numbers: 4 across, or 2 x 2
-    var top = Math.max.apply(null, r.clears), across = pw >= 272 ? 4 : 2, cw = Math.floor(pw / across);
+    y += Math.ceil(rows.length / 2) * rh;
+    // 0.33: each character's sprite and levels cleared with the MVP in gold, the MVP stage's order and numbers. Short
+    // screens get the game's small frames (23 px at most) so the signing field stays big, tall ones the big frames.
+    var top = Math.max.apply(null, r.clears), cw = Math.floor(pw / 4), big = H >= 240, feet = y + (big ? 32 : 23);
     [0, 3, 2, 1].forEach(function (c, i) {
-      var x0 = px + (i % across) * cw, yy = y + Math.floor(i / across) * rh, mvp = top && r.clears[c] === top;
-      rrect(x0, yy, 8, 8, S.CHAR_COL[c]);
-      G.text(ctx, S.CHARS[c], x0 + 10, yy, CHAR_TEXT[c]);
-      G.textR(ctx, String(r.clears[c]), x0 + cw - 4, yy, mvp ? T.gold : C.dbrown);
-      if (mvp && cw >= 100) G.textR(ctx, 'MVP', x0 + cw - 24, yy, T.gold);
+      var x0 = px + i * cw, mvp = top && r.clears[c] === top, spr = charSprite(c, big);
+      if (spr) ctx.drawImage(spr, x0, feet - 32);
+      else { rrect(x0 + 4, feet - 9, 9, 9, S.CHAR_COL[c]); G.text(ctx, S.CHARS[c][0], x0 + 5, feet - 8, C.white); }
+      G.text(ctx, String(r.clears[c]), x0 + 18, feet - 8, mvp ? T.gold : C.dbrown);
+      if (mvp) G.text(ctx, 'MVP', x0 + 18, feet - 18, T.gold);
     });
-    y += Math.ceil(4 / across) * rh + 2;
-    if (r.dev) { G.textC(ctx, 'DEV CODES USED', cx, y, T.red); y += 10; }
-    G.text(ctx, r.saved ? 'SIGNED' : 'SIGN YOUR NAME', px, y, r.saved ? T.green : T.red); y += 10;
+    y = feet + 1;
     // signature field: the same size once saved, so the drawing stays; a new screen shape stretches it to fit
-    var bw = pw, by = y, bh = Math.max(24, y0 + h - y - 18);
+    var foot = 18, bw = pw, by = y, bh = y0 + h - 6 - foot - 3 - by, ty = by + bh + 3;
     if (!r.sig || r.sw !== bw || r.sh !== bh) {
       var old = r.sig, ow = r.sw, oh = r.sh; r.sig = new Uint8Array(bw * bh); r.sw = bw; r.sh = bh;
-      if (old) for (var k = 0; k < old.length; k++) if (old[k]) r.sig[Math.floor(Math.floor(k / ow) * bh / oh) * bw + Math.floor((k % ow) * bw / ow)] = 1;
+      if (old) {                                          // both ways round: shrinking keeps thin lines, growing leaves no gaps
+        for (var k = 0; k < old.length; k++) if (old[k]) r.sig[Math.floor(Math.floor(k / ow) * bh / oh) * bw + Math.floor((k % ow) * bw / ow)] = 1;
+        for (var dy = 0; dy < bh; dy++) for (var dx = 0; dx < bw; dx++) if (old[Math.floor(dy * oh / bh) * ow + Math.floor(dx * ow / bw)]) r.sig[dy * bw + dx] = 1;
+      }
     }
     sigBox = r.saved ? null : { x: px, y: by, w: bw, h: bh };
-    ctx.fillStyle = '#9a7048'; ctx.fillRect(px, by, bw, bh);
+    ctx.fillStyle = C.edge; ctx.fillRect(px, by, bw, bh);
     ctx.fillStyle = C.parch; ctx.fillRect(px + 1, by + 1, bw - 2, bh - 2);
-    ctx.fillStyle = '#c8a878'; ctx.fillRect(px + 8, by + bh - 7, bw - 16, 1);          // signing line
+    var line = by + bh - Math.max(10, bh >> 2);
+    ctx.fillStyle = C.line; ctx.fillRect(px + 8, line, bw - 16, 1);          // signing line
     ctx.fillStyle = C.dbrown;
-    for (var q = 0; q < r.sig.length; q++) if (r.sig[q]) ctx.fillRect(px + (q % bw), by + Math.floor(q / bw), 1, 1);
-    if (r.saved) return;
-    var ty = by + bh + 3;
-    button('CLEAR', px + pw - 108, ty, 52, 11, false, function () { r.sig.fill(0); });
-    button('SAVE', px + pw - 52, ty, 52, 11, false, function () {
+    var ink = false;
+    for (var q = 0; q < r.sig.length; q++) if (r.sig[q]) { ink = true; ctx.fillRect(px + (q % bw), by + Math.floor(q / bw), 1, 1); }
+    if (!ink) G.textC(ctx, 'SIGN YOUR NAME', cx, line - 12, T.muted);
+    if (r.saved) { G.textC(ctx, 'SIGNED', cx, ty + 5, T.green); return; }
+    // finger-sized: half the width each
+    var half = (pw - 4) >> 1;
+    button('CLEAR', px, ty, half, foot, false, function () { r.sig.fill(0); });
+    button('SAVE', px + pw - half, ty, half, foot, false, function () {
       if (!r.sig.some(function (v) { return v; })) return;
       var oc = document.createElement('canvas'); oc.width = bw; oc.height = bh;
       var ox = oc.getContext('2d'); ox.fillStyle = C.dbrown;
       for (var n = 0; n < r.sig.length; n++) if (r.sig[n]) ox.fillRect(n % bw, Math.floor(n / bw), 1, 1);
       hall.push({ sig: oc.toDataURL('image/png'), date: r.date, clock: r.clock, t: r.t, secs: r.secs, deaths: r.deaths, levels: r.levels,
-                  ace: r.ace, eggs: r.eggs, score: r.score, clears: r.clears, dev: r.dev });
+                  ace: r.ace, eggs: r.eggs, score: r.score, clears: r.clears, dev: r.dev, warps: r.warps });
       hall = hall.slice(-20); save('sma.hall', hall); r.saved = true; sigBox = null;
     });
   }
-  function sigPlot(x0, y0, x1, y1) {           // Bresenham line in logical pixels, 1 px pen
+  // 0.32: the pen, for a fingertip. The contact point wobbles and comes in jumps, so every sample is eased and they are
+  // joined by curves through their midpoints, with a 2 px pen. Still the page's logical pixels, so it looks like the game's.
+  var SIG_EASE = 0.6;
+  function sigDot(x, y) {
     var r = report, b = sigBox; if (!r || !b) return;
-    var dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx + dy;
-    for (var n = 0; n < 2000; n++) {
-      var px = x0 - b.x, py = y0 - b.y;
-      if (px >= 1 && py >= 1 && px < b.w - 1 && py < b.h - 1) r.sig[py * b.w + px] = 1;
-      if (x0 === x1 && y0 === y1) break;
-      var e2 = 2 * err;
-      if (e2 >= dy) { err += dy; x0 += sx; }
-      if (e2 <= dx) { err += dx; y0 += sy; }
+    x = Math.round(x) - b.x; y = Math.round(y) - b.y;
+    for (var j = -1; j <= 0; j++) for (var i = -1; i <= 0; i++) {
+      var qx = x + i, qy = y + j;
+      if (qx >= 1 && qy >= 1 && qx < b.w - 1 && qy < b.h - 1) r.sig[qy * b.w + qx] = 1;
+    }
+  }
+  function sigCurve(x0, y0, cx, cy, x1, y1) {  // a quadratic from x0,y0 to x1,y1 in steps under a pixel
+    var n = Math.max(1, Math.ceil(Math.abs(cx - x0) + Math.abs(cy - y0) + Math.abs(x1 - cx) + Math.abs(y1 - cy)));
+    for (var i = 1; i <= n; i++) {
+      var t = i / n, u = 1 - t;
+      sigDot(u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1);
     }
   }
 
@@ -970,18 +1322,36 @@
   function drawOptions(p) {
     card(p.x + 1, p.y + 1, p.w - 2, p.h - 2);
     optPane = p;
-    ctx.save(); ctx.beginPath(); ctx.rect(p.x + 2, p.y + 2, p.w - 4, p.h - 4); ctx.clip();
-    var x = p.x + 6, y = p.y + 6 - optScroll, cw = p.w - 12;
+    ctx.save(); ctx.beginPath(); ctx.rect(p.x + 6, p.y + 7, p.w - 12, p.h - 14); ctx.clip();
+    var x = p.x + 9, y = p.y + 9 - optScroll, cw = p.w - 18;
     var slots = [];
     if (DUAL && Native.slots) { try { slots = JSON.parse(Native.slots()); } catch (e) {} }
-    ribbon('SAVE STATES', x, y, C.red); y += 13;
-    var cardW = Math.floor((cw - 4) / 2), th = Math.round((cardW - 4) * 2 / 3), ch = th + 30;
+    if (LINK) {                                            // only Link has this
+      var s3 = settings3d(), onoff = function (v) { return v ? 'ON' : 'OFF'; }, flip = function (k) { return function () { set3d(k, !s3[k]); }; };
+      ribbon('3D VIEW', x, y); y += 13;
+      option('3D TAB', onoff(opts.tab3d), x, y, cw, function () { opts.tab3d = !opts.tab3d; save('sma.opts', opts); resize(); }); y += 13;
+      if (opts.tab3d) {
+        option('CAMERA', s3.cam3d.toUpperCase(), x, y, cw, nextCam); y += 13;
+        option('BLOCK DEPTH', String(s3.depth3d), x, y, cw, function () { var v = s3.depth3d + 4; set3d('depth3d', v > 48 ? 4 : v); }); y += 13;
+        option('BACK WALL', { near: 'NEAR', far: 'DEEP', off: 'OFF' }[s3.back3d] || 'NEAR', x, y, cw, function () { var b = ['near', 'far', 'off']; set3d('back3d', b[(b.indexOf(s3.back3d) + 1) % 3]); }); y += 13;
+        option('BACKGROUND', onoff(s3.cave3d), x, y, cw, flip('cave3d')); y += 13;
+        option('PLAYER LIGHT', onoff(s3.light3d), x, y, cw, flip('light3d')); y += 13;
+        option('THICK SPRITES', onoff(s3.thick3d), x, y, cw, flip('thick3d')); y += 13;
+        option('ROUND SPRITES', onoff(s3.round3d), x, y, cw, flip('round3d')); y += 13;
+      }
+      y += 5;
+    }
+    ribbon(LINK ? 'RETROARCH STATES' : 'SAVE STATES', x, y); y += 13;
+    // Link: RetroArch's slots, which can't be listed or give a picture, so no thumbnails and LOAD is always offered
+    var cardW = Math.floor((cw - 4) / 2), th = LINK ? 0 : Math.round((cardW - 4) * 2 / 3), ch = th + 30;
     slots.forEach(function (sl, i) {
       var cx = x + (i % 2) * (cardW + 4), cy = y + Math.floor(i / 2) * (ch + 4);
       ctx.fillStyle = C.parch; ctx.fillRect(cx, cy, cardW, ch);
-      var im = slotThumb(sl);
-      if (im) ctx.drawImage(im, cx + 2, cy + 2, cardW - 4, th); else { ctx.fillStyle = C.lblue; ctx.fillRect(cx + 2, cy + 2, cardW - 4, th); G.textC(ctx, 'EMPTY', cx + cardW / 2, cy + th / 2 - 2, C.white); }
-      G.text(ctx, String(sl.n), cx + 3, cy + th + 4, C.brown);
+      if (!LINK) {
+        var im = slotThumb(sl);
+        if (im) ctx.drawImage(im, cx + 2, cy + 2, cardW - 4, th); else { ctx.fillStyle = C.lblue; ctx.fillRect(cx + 2, cy + 2, cardW - 4, th); G.textC(ctx, 'EMPTY', cx + cardW / 2, cy + th / 2 - 2, C.white); }
+      }
+      G.text(ctx, (LINK ? 'SLOT ' : '') + sl.n, cx + 3, cy + th + 4, C.brown);
       var armed = function (act) { return slotArm && slotArm.n === sl.n && slotArm.act === act && slotArm.until > tickN; };
       var bw = Math.floor((cardW - 8) / 2), by = cy + th + 14;
       button(armed('save') ? 'SURE?' : 'SAVE', cx + 2, by, bw, 13, armed('save'), function () {
@@ -994,11 +1364,11 @@
       });
     });
     y += Math.ceil(slots.length / 2) * (ch + 4) + 6;
-    ribbon('MAP', x, y, '#30a030'); y += 13;
+    ribbon('MAP', x, y); y += 13;
     option('X-RAY GRASS', opts.xray ? 'ON' : 'OFF', x, y, cw, function () { opts.xray = !opts.xray; save('sma.opts', opts); }); y += 13;
     option('MARKERS', opts.markers ? 'ON' : 'OFF', x, y, cw, function () { opts.markers = !opts.markers; save('sma.opts', opts); }); y += 13;
     option('MAP ZOOM', (opts.zl + 1) + ' OF 4', x, y, cw, function () { toggleZoom(); }); y += 18;
-    ribbon('MARKERS', x, y, '#2870e0'); y += 13;
+    ribbon('MARKERS', x, y); y += 13;
     var legend = [['C', 'COIN', 'coin'], ['V', 'BIG VEG', 'bigveg'], ['R', 'ROCKET', 'rocket'], ['S', 'SHELL', 'shell'], ['B', 'BOMB', 'bomb'],
                   ['K', 'KEY', 'key'], ['O', 'CRYSTAL', 'crystal'], ['P', 'POTION', 'potion'], ['1', '1UP', 'oneup'], ['W', 'POW', 'pow'], ['H', 'HEART', 'heart'], ['N', 'NINJI', 'ninji'],
                   ['G', 'GIANT', 'giantShy'], ['E', 'YOSHI EGG', 'egg'], ['M', 'MUSHROOM SPOT', 'mushroom']], rowH = hasIcons() ? 18 : 10;
@@ -1008,14 +1378,19 @@
       else { G.text(ctx, k[0], xx, yy, C.dred); G.text(ctx, k[1], xx + 12, yy, C.brown); }
     });
     y += Math.ceil(legend.length / 2) * rowH + 4;
-    if (DUAL) { option('PAUSE GAME', '', x, y, cw, function () { Native.menu(); }); y += 13; }
+    if (DUAL) { option(LINK ? 'RETROARCH MENU' : 'PAUSE GAME', '', x, y, cw, function () { Native.menu(); }); y += 13; }
     if (DUAL && Native.overlay && Native.overlay()) { option('BACK TO GAME', '', x, y, cw, function () { Native.close(); }); y += 13; }
-    G.text(ctx, 'SMA DUAL ' + (DUAL ? Native.version() : ''), x, y + 4, T.muted);
-    optMax = Math.max(0, y + optScroll + 16 - (p.y + p.h));
+    if (LINK) {
+      option('CHOOSE ANOTHER ROM', '', x, y, cw, function () { Native.pickRom(); }); y += 13;
+      var armedR = statsArm > tickN;                       // play time, deaths and who cleared what: kept on this device, not in RetroArch's states
+      option(armedR ? 'RESET STATS: SURE?' : 'RESET STATS', '', x, y, cw, function () { if (statsArm > tickN) { statsArm = 0; Native.resetStats(); optMsg = 'STATS RESET'; optMsgT = tickN + 40; } else statsArm = tickN + 40; }); y += 13;
+    }
+    G.text(ctx, (LINK ? 'SMA LINK ' : 'SMA DUAL ') + (DUAL ? Native.version() : ''), x, y + 4, T.muted);
+    optMax = Math.max(0, y + optScroll + 20 - (p.y + p.h));
     ctx.restore();
-    if (optMsgT > tickN) { var tw = optMsg.length * 8 + 10; ctx.fillStyle = C.navy; ctx.fillRect(p.x + p.w / 2 - tw / 2, p.y + p.h - 18, tw, 13); G.textC(ctx, optMsg, p.x + p.w / 2, p.y + p.h - 15, C.white); }
+    if (optMsgT > tickN) { var tw = optMsg.length * 8 + 10; ctx.fillStyle = C.dbrown; ctx.fillRect(p.x + p.w / 2 - tw / 2, p.y + p.h - 22, tw, 13); G.textC(ctx, optMsg, p.x + p.w / 2, p.y + p.h - 19, C.white); }
   }
-  var optMax = 0;
+  var optMax = 0, statsArm = 0;
   function option(label, value, x, y, w, fn) {
     G.text(ctx, label, x, y, C.brown);
     if (value) G.textR(ctx, value, x + w, y, T.blue);
@@ -1049,16 +1424,19 @@
     G.textC(ctx, S.CHARS[ch][0], x + 12, y + 10, CHAR_TEXT[ch]);
   }
   // ------------------------------------------------------------------ tabs + input
-  var TAB_COL = { status: '#e03828', map: '#30a030', chart: '#2870e0', options: '#e89000' };
+  var TAB_COL = { status: '#e03828', map: '#30a030', chart: '#2870e0', options: '#e89000', '3d': '#8a6ab0' };
   function drawTabs() {
     var y = layout.tabY, n = tabs.length, w = Math.floor(W / n);
-    ctx.fillStyle = '#9a7048'; ctx.fillRect(0, y - 1, W, H - y + 1);
+    ctx.fillStyle = C.edge; ctx.fillRect(0, y - 1, W, H - y + 1);
+    // Link's fifth tab on the small screen: OPTIONS wouldn't fit in a fifth of it, so each takes room by its name
+    var fit = n > 4, chars = tabs.join('').length, spare = (W - chars * 8) / n, tx = 0;
     tabs.forEach(function (t, i) {
-      var x = i * w, on = t === tab, col = TAB_COL[t] || C.blue;
-      rrect(x + 1, y, w - 2, H - y, on ? '#fbf4dc' : '#e6d8b8');
-      if (on) { ctx.fillStyle = soft(col, 0.8); ctx.fillRect(x + 2, y, w - 4, 2); }
-      G.textC(ctx, t.toUpperCase(), x + w / 2, y + 3, on ? '#a82a1a' : '#6a5030');
-      buttons.push({ x: x, y: y, w: w, h: H - y, fn: function () { tab = t; } });
+      var tw = fit ? (i === n - 1 ? W - tx : Math.round(t.length * 8 + spare)) : w, x = fit ? tx : i * w, on = t === tab, col = themed ? C.orange : soft(TAB_COL[t] || C.blue, 0.8);
+      rrect(x + 1, y, tw - 2, H - y, on ? C.cream : C.parch);
+      if (on) { ctx.fillStyle = col; ctx.fillRect(x + 2, y, tw - 4, 2); }
+      G.textC(ctx, t.toUpperCase(), x + tw / 2, y + 3, on ? C.dbrown : C.brown);
+      buttons.push({ x: x, y: y, w: tw, h: H - y, fn: function () { tab = t; } });
+      tx += tw;
     });
   }
   function inOptions(x, y) { var p = optPane; return tab === 'options' && p && x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h; }
@@ -1075,7 +1453,7 @@
   cv.addEventListener('pointermove', function (e) {
     if (!down) return;
     var p = pos(e);
-    if (Math.abs(p[0] - down.x) + Math.abs(p[1] - down.y) > 4) down.moved = true;
+    if (Math.abs(p[0] - down.x) + Math.abs(p[1] - down.y) > (report ? 12 : 4)) down.moved = true;   // nothing scrolls on the ending card, and a fingertip rolls
     if (mapDrag && down.moved) { mapPan.x = mapDrag.px - (p[0] - mapDrag.x) / mapScale; mapPan.y = mapDrag.py - (p[1] - mapDrag.y) / mapScale; dragTick = tickN; draw(); }
     if (optDrag && down.moved) { optScroll = Math.max(0, Math.min(optMax, optDrag.s - (p[1] - optDrag.y))); draw(); }
   });
@@ -1089,21 +1467,36 @@
     if (inMap(p[0], p[1])) { toggleZoom(); draw(); }
   });
   cv.addEventListener('pointercancel', function () { down = null; mapDrag = null; optDrag = null; });
-  // signing the ending card: strokes in the page's logical pixels, so they look like the game's
-  function logical(e) { var p = pos(e); return [Math.floor(p[0]), Math.floor(p[1])]; }
+  // signing the ending card (the pen is sigDot / sigCurve). A stroke may start just outside the field, and a second
+  // touch (a thumb on the grip side) is ignored while one is going.
   cv.addEventListener('pointerdown', function (e) {
-    var p = logical(e), b = sigBox;
-    if (report && b && p[0] >= b.x && p[0] < b.x + b.w && p[1] >= b.y && p[1] < b.y + b.h) {
-      drawing = { id: e.pointerId, x: p[0], y: p[1] }; sigPlot(p[0], p[1], p[0], p[1]);
+    var p = pos(e), b = sigBox, m = 4;
+    if (report && b && p[0] >= b.x - m && p[0] < b.x + b.w + m && p[1] >= b.y - m && p[1] < b.y + b.h) {
+      e.stopImmediatePropagation();
+      if (drawing) return;
+      drawing = { id: e.pointerId, x: p[0], y: p[1], mx: p[0], my: p[1] }; sigDot(p[0], p[1]);
       try { cv.setPointerCapture(e.pointerId); } catch (err) {}
-      e.stopImmediatePropagation(); draw();
+      draw();
     }
   }, true);
   cv.addEventListener('pointermove', function (e) {
-    if (!drawing || e.pointerId !== drawing.id) return;
-    var p = logical(e); sigPlot(drawing.x, drawing.y, p[0], p[1]); drawing.x = p[0]; drawing.y = p[1]; draw();
+    var d = drawing; if (!d || e.pointerId !== d.id) return;
+    var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    (evs.length ? evs : [e]).forEach(function (ev) {
+      var p = pos(ev), nx = d.x + (p[0] - d.x) * SIG_EASE, ny = d.y + (p[1] - d.y) * SIG_EASE, mx = (d.x + nx) / 2, my = (d.y + ny) / 2;
+      sigCurve(d.mx, d.my, d.x, d.y, mx, my);
+      d.x = nx; d.y = ny; d.mx = mx; d.my = my;
+    });
+    draw();
   });
-  ['pointerup', 'pointercancel'].forEach(function (ev) { cv.addEventListener(ev, function () { drawing = null; }); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (ev) {
+    cv.addEventListener(ev, function (e) {
+      var d = drawing; if (!d || e.pointerId !== d.id) return;
+      sigCurve(d.mx, d.my, d.x, d.y, d.x, d.y);   // the eased point lags: finish the stroke where the finger left
+      if (ev === 'pointerup') { var p = pos(e); sigCurve(d.x, d.y, p[0], p[1], p[0], p[1]); }
+      drawing = null; draw();
+    });
+  });
 
   resize();
   setInterval(poll, 100);

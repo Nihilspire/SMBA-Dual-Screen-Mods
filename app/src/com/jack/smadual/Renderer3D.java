@@ -45,6 +45,13 @@ final class Renderer3D implements GLSurfaceView.Renderer {
     }
     /** True while the last drawn frame was the flat picture. */
     volatile boolean flat = true;
+    /** Link (RetroArch): there is no picture to fall back on, so outside play the last good 3D frame stays up. Dual leaves this off. */
+    volatile boolean hold;
+    /** Frames of play before 3D starts. Link's frames are about 33 ms apart, and it has checked its memory is settled first. */
+    volatile int minRun = 8;
+    private boolean held;
+    private int dNv, dCaveStart, dCaveCount, dSpriteStart, dHudStart, dSky, dGround, dLightOn;
+    private float dLightAmt, dLightX, dLightY;
 
     private int prog, aPos, aUv, aShade, aKind, uMvp, uTex, uCave, uBg, uLight, uLightOn, uMode, uMask, uGround;
     private int atlasTex, caveTex, maskTex, hudTex, picTex, vbo;
@@ -110,7 +117,7 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         GLES20.glGenBuffers(1, t, 3);
         vbo = t[3];
         scene.atlasChanged = true; scene.bdChanged = true; scene.hudChanged = true;
-        forceAtlas = true;
+        forceAtlas = true; held = false;
     }
     private boolean forceAtlas;
 
@@ -193,9 +200,11 @@ final class Renderer3D implements GLSurfaceView.Renderer {
             }
         }
         // 3D only once the game has been in play for a few frames and the level data matches the screen
-        boolean want3d = playing && playRun >= 8;
+        boolean want3d = playing && playRun >= minRun;
         if (want3d) { scene.setCamera(W, H, pitch, yaw, zoom); scene.build(current, camDist); }
-        if (!want3d || !scene.mapped) { drawFlat(newPic); return; }
+        boolean live = want3d && scene.mapped;
+        if (!live && !hold) { drawFlat(newPic); return; }
+        if (!live && !held) { GLES20.glClearColor(0, 0, 0, 1); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT); return; }
         flat = false;
         float[] pr = preset(camPreset);
         pitch += (pr[0] - pitch) * 0.12f; yaw += (pr[1] - yaw) * 0.12f; zoom += (pr[2] - zoom) * 0.12f;
@@ -205,47 +214,54 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         Scene3D s = scene;
 
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1);
-        if (s.atlasChanged || forceAtlas) {
-            atlasBuf = direct(atlasBuf, s.atlas);
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, atlasTex);
-            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, Scene3D.ATLAS_W, Scene3D.ATLAS_H, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, atlasBuf);
-            params();
-            s.atlasChanged = false; forceAtlas = false;
-        }
-        if (s.bdChanged) {
-            bdBuf = direct(bdBuf, s.backdrop);
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, caveTex);
-            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, s.bdW, s.bdH, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bdBuf);
-            params();
-            s.bdChanged = false;
-        }
-        if (s.hudChanged) {
-            hudBuf = direct(hudBuf, s.hud);
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, hudTex);
-            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 256, 256, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, hudBuf);
-            params();
-            s.hudChanged = false;
-        }
-        if (s.maskChanged) {
-            maskBuf.clear(); maskBuf.put(s.mask); maskBuf.position(0);
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex);
-            GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 256, 256, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, maskBuf);
-            s.maskChanged = false;
+        if (live) {
+            if (s.atlasChanged || forceAtlas) {
+                atlasBuf = direct(atlasBuf, s.atlas);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, atlasTex);
+                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, Scene3D.ATLAS_W, Scene3D.ATLAS_H, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, atlasBuf);
+                params();
+                s.atlasChanged = false; forceAtlas = false;
+            }
+            if (s.bdChanged) {
+                bdBuf = direct(bdBuf, s.backdrop);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, caveTex);
+                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, s.bdW, s.bdH, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bdBuf);
+                params();
+                s.bdChanged = false;
+            }
+            if (s.hudChanged) {
+                hudBuf = direct(hudBuf, s.hud);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, hudTex);
+                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 256, 256, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, hudBuf);
+                params();
+                s.hudChanged = false;
+            }
+            if (s.maskChanged) {
+                maskBuf.clear(); maskBuf.put(s.mask); maskBuf.position(0);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex);
+                GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 256, 256, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, maskBuf);
+                s.maskChanged = false;
+            }
+            dNv = s.nv; dCaveStart = s.caveStart; dCaveCount = s.caveCount; dSpriteStart = s.spriteStart; dHudStart = s.hudStart;
+            dSky = s.skyRgb; dGround = s.groundRgb; dLightAmt = s.light ? s.lightAmt : 0; dLightX = s.lightX; dLightY = s.lightY;
         }
 
-        int sky = s.skyRgb;
+        int sky = dSky;
         float br = ((sky >> 16) & 255) / 255f, bg = ((sky >> 8) & 255) / 255f, bb = (sky & 255) / 255f;
         GLES20.glClearColor(br, bg, bb, 1);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
         GLES20.glEnable(GLES20.GL_DEPTH_TEST);
         GLES20.glEnable(GLES20.GL_CULL_FACE);
 
-        int nv = s.nv;
-        if (fb.capacity() < nv * 7) fb = ByteBuffer.allocateDirect(s.verts.length * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
-        fb.clear(); fb.put(s.verts, 0, nv * 7); fb.position(0);
         GLES20.glUseProgram(prog);
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, vbo);
-        GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, nv * 7 * 4, fb, GLES20.GL_STREAM_DRAW);
+        if (live) {
+            int nv = dNv;
+            if (fb.capacity() < nv * 7) fb = ByteBuffer.allocateDirect(s.verts.length * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+            fb.clear(); fb.put(s.verts, 0, nv * 7); fb.position(0);
+            GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, nv * 7 * 4, fb, GLES20.GL_STREAM_DRAW);
+            held = true;                                   // a held frame draws what the buffer and textures already hold
+        }
         int stride = 7 * 4;
         GLES20.glEnableVertexAttribArray(aPos); GLES20.glVertexAttribPointer(aPos, 3, GLES20.GL_FLOAT, false, stride, 0);
         GLES20.glEnableVertexAttribArray(aUv); GLES20.glVertexAttribPointer(aUv, 2, GLES20.GL_FLOAT, false, stride, 12);
@@ -253,28 +269,28 @@ final class Renderer3D implements GLSurfaceView.Renderer {
         GLES20.glEnableVertexAttribArray(aKind); GLES20.glVertexAttribPointer(aKind, 1, GLES20.GL_FLOAT, false, stride, 24);
         GLES20.glUniformMatrix4fv(uMvp, 1, false, m, 0);
         GLES20.glUniform3f(uBg, br, bg, bb);
-        int gr = s.groundRgb;
+        int gr = dGround;
         GLES20.glUniform4f(uGround, ((gr >> 16) & 255) / 255f, ((gr >> 8) & 255) / 255f, (gr & 255) / 255f, gr < 0 ? 0 : 1);
-        GLES20.glUniform1f(uLightOn, s.light ? s.lightAmt : 0);
-        GLES20.glUniform2f(uLight, s.lightX, s.lightY);
+        GLES20.glUniform1f(uLightOn, dLightAmt);
+        GLES20.glUniform2f(uLight, dLightX, dLightY);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, atlasTex); GLES20.glUniform1i(uTex, 0);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, caveTex); GLES20.glUniform1i(uCave, 1);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex); GLES20.glUniform1i(uMask, 2);
         GLES20.glUniform1i(uMode, 0);
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, s.caveStart);
-        if (s.caveCount > 0) { GLES20.glUniform1i(uMode, 1); GLES20.glDrawArrays(GLES20.GL_TRIANGLES, s.caveStart, s.caveCount); }
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, dCaveStart);
+        if (dCaveCount > 0) { GLES20.glUniform1i(uMode, 1); GLES20.glDrawArrays(GLES20.GL_TRIANGLES, dCaveStart, dCaveCount); }
         // sprites: their own depth pass (depth cleared first), so nothing that overlaps terrain in 2D is cut off but a
         // thick sprite (Scene3D.extrude) hides its own walls. LEQUAL: at equal depth the later (higher priority) OAM entry
         // wins, as on the GBA. No culling: the walls face every way. Blending for the window-effect quads at the end of the
         // pass (Scene3D.glow); everything else in it is opaque.
-        if (s.hudStart > s.spriteStart) {
+        if (dHudStart > dSpriteStart) {
             GLES20.glUniform1i(uMode, 0);
             GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT);
             GLES20.glDepthFunc(GLES20.GL_LEQUAL);
             GLES20.glDisable(GLES20.GL_CULL_FACE);
             GLES20.glEnable(GLES20.GL_BLEND);
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, s.spriteStart, s.hudStart - s.spriteStart);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, dSpriteStart, dHudStart - dSpriteStart);
             GLES20.glDisable(GLES20.GL_BLEND);
             GLES20.glDepthFunc(GLES20.GL_LESS);
         }

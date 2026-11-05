@@ -49,7 +49,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.zip.CRC32;
 
 public class MainActivity extends Activity {
-    static final String VERSION = "0.30";
+    static final String VERSION = "0.43";
     static final int PICK_ROM = 1;
 
     SharedPreferences prefs;
