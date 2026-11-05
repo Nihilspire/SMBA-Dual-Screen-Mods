@@ -4,6 +4,7 @@ out/android/*
 !out/android/libsmadual.so
 tests/scene3d/out/
 tests/ra/out/
+tests/input/out/
 __pycache__/
 *.apk
-tools/smalink.keystore*
+tools/*.keystore*

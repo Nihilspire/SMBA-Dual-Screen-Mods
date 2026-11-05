@@ -49,7 +49,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.zip.CRC32;
 
 public class MainActivity extends Activity {
-    static final String VERSION = "0.43";
+    static final String VERSION = "0.44";
     static final int PICK_ROM = 1;
 
     SharedPreferences prefs;
@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
         File ext = getExternalFilesDir("states");
         stateDir = ext != null ? ext : new File(getFilesDir(), "states");
         stateDir.mkdirs();
+        upgradeDefaults();
         binds.load(prefs.getString("keyBinds", ""));
         gfx.load(romFile);
         romCrc = crcOf(gfx.rom);
@@ -276,6 +277,20 @@ public class MainActivity extends Activity {
         } catch (Exception e) { return ""; }
     }
 
+    /** Once, on the first start of 0.44. Preferences keep whatever was ever changed, so an older install would otherwise hold on to its
+     *  3D settings and a playtest unlock instead of starting from 0.44's defaults. A quick save moves to slot 1 if that slot is empty. */
+    private void upgradeDefaults() {
+        if (prefs.getInt("defaults", 0) >= 44) return;
+        SharedPreferences.Editor ed = prefs.edit();
+        for (String k : Scene3D.PREF_KEYS) ed.remove(k);
+        ed.remove("devUnlock").remove("codeHealth").remove("codeLives");
+        String saved = prefs.getString("keyBinds", "");
+        if (!saved.isEmpty()) { Binds b = new Binds(); b.load(saved); b.upgrade44(); ed.putString("keyBinds", b.save()); }
+        File quick = new File(stateDir, "quick.st"), slot1 = new File(stateDir, "slot1.st");
+        if (quick.exists() && !slot1.exists() && quick.renameTo(slot1)) new File(stateDir, "quick.png").renameTo(new File(stateDir, "slot1.png"));
+        ed.putInt("defaults", 44).apply();
+    }
+
     void applySettings() {
         game.aspect = prefs.getString("aspect", "3:2");
         game.bezels = prefs.getBoolean("bezels", true);
@@ -284,7 +299,7 @@ public class MainActivity extends Activity {
         loadCodes();
         view3d = prefs.getBoolean("dev3d", false);
         r3d.camPreset = cam3d();
-        r3d.scene.depth = prefs.getInt("depth3d", 16);
+        r3d.scene.depth = prefs.getInt("depth3d", Scene3D.DEF_DEPTH);
         r3d.scene.back = prefs.getString("back3d", "near");
         r3d.scene.cave = prefs.getBoolean("cave3d", true);
         r3d.scene.rom = gfx.rom;
@@ -400,6 +415,23 @@ public class MainActivity extends Activity {
         return msg[0];
     }
 
+    /** A message on whichever view is showing, from any thread. */
+    void osd(final String s) { ui.post(new Runnable() { public void run() { (view3d ? border3d : game).showOsd(s); } }); }
+
+    /** The SAVE SLOT 1 button (L2 by default): the same file as the menu's SLOT 1. It doesn't ask before overwriting, as hotkeys go. */
+    void saveHotkey() {
+        if (!started) return;
+        emu.call(new Runnable() { public void run() { osd(saveSlot("slot1") ? "SAVED TO SLOT 1" : "SAVE FAILED"); } }, 0);
+    }
+
+    /** The LOAD SLOT 1 button (R2 by default). */
+    void loadHotkey() {
+        if (!started) return;
+        final File f = new File(stateDir, "slot1.st");
+        if (!f.exists()) { osd("SLOT 1 IS EMPTY"); return; }
+        emu.call(new Runnable() { public void run() { osd(Native.stateLoad(f.getAbsolutePath()) == 0 ? "LOADED SLOT 1" : "LOAD FAILED"); } }, 0);
+    }
+
     void toggle3d() {
         boolean on = !prefs.getBoolean("dev3d", false);
         prefs.edit().putBoolean("dev3d", on).apply();
@@ -410,9 +442,9 @@ public class MainActivity extends Activity {
     /** The 3D cameras, in the order the hotkey and the menu step through them. */
     static final String[] CAMS = { "low", "tilt", "diorama", "far" };
     String cam3d() {
-        String c = prefs.getString("cam3d", "tilt");
+        String c = prefs.getString("cam3d", Scene3D.DEF_CAM);
         for (String k : CAMS) if (k.equals(c)) return c;
-        return "tilt";                                            // 0.21's side
+        return Scene3D.DEF_CAM;
     }
 
     void cycleCamera() {
@@ -425,7 +457,7 @@ public class MainActivity extends Activity {
     }
 
     void changeDepth(int delta) {
-        int d = Math.max(DEPTH_MIN, Math.min(DEPTH_MAX, prefs.getInt("depth3d", 16) + delta));
+        int d = Math.max(DEPTH_MIN, Math.min(DEPTH_MAX, prefs.getInt("depth3d", Scene3D.DEF_DEPTH) + delta));
         prefs.edit().putInt("depth3d", d).apply();
         r3d.scene.depth = d;
         if (view3d) border3d.showOsd("DEPTH " + d); else game.showOsd("3D DEPTH " + d);
@@ -446,7 +478,7 @@ public class MainActivity extends Activity {
             JSONObject s = new JSONObject();
             s.put("dev3d", prefs.getBoolean("dev3d", false));
             s.put("cam3d", cam3d());
-            s.put("depth3d", prefs.getInt("depth3d", 16));
+            s.put("depth3d", prefs.getInt("depth3d", Scene3D.DEF_DEPTH));
             s.put("border3d", prefs.getBoolean("border3d", true));
             s.put("back3d", prefs.getString("back3d", "near"));
             s.put("cave3d", prefs.getBoolean("cave3d", true));
@@ -516,10 +548,25 @@ public class MainActivity extends Activity {
 
     // ------------------------------------------------------------------ input
 
+    private final Triggers triggers = new Triggers();
+
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
         int code = e.getKeyCode();
         if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN || code == KeyEvent.KEYCODE_VOLUME_MUTE)
             return super.dispatchKeyEvent(e);
+        int trig = code == KeyEvent.KEYCODE_BUTTON_L2 ? 0 : code == KeyEvent.KEYCODE_BUTTON_R2 ? 1 : -1;
+        if (trig >= 0 && !triggers.key(trig, e.getAction() == KeyEvent.ACTION_DOWN)) return true;
+        return handleKey(e);
+    }
+
+    /** An analog trigger's axis, acting as the L2 or R2 key: everything those keys do, including being bound to a button, works from it. */
+    private void triggerAxis(int i, float v) {
+        int a = triggers.axis(i, v);
+        if (a != 0) handleKey(new KeyEvent(a > 0 ? KeyEvent.ACTION_DOWN : KeyEvent.ACTION_UP, i == 0 ? KeyEvent.KEYCODE_BUTTON_L2 : KeyEvent.KEYCODE_BUTTON_R2));
+    }
+
+    private boolean handleKey(KeyEvent e) {
+        int code = e.getKeyCode();
         boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
         if (e.getAction() == KeyEvent.ACTION_UP && code == swallowUp) { swallowUp = -1; return true; }
         if (isGamepad(e) && !usingPad) { usingPad = true; updatePadVisibility(); }
@@ -565,8 +612,8 @@ public class MainActivity extends Activity {
         int special = Gba.special(btn);
         if (down) { keyBits |= bit; specialBits |= special; } else { keyBits &= ~bit; specialBits &= ~special; }
         if (down && e.getRepeatCount() == 0) {
-            if (btn == 12) emu.call(new Runnable() { public void run() { saveSlot("quick"); } }, 0);
-            if (btn == 13) emu.call(new Runnable() { public void run() { Native.stateLoad(new File(stateDir, "quick.st").getAbsolutePath()); } }, 0);
+            if (btn == 12) saveHotkey();
+            if (btn == 13) loadHotkey();
         }
         return true;
     }
@@ -583,6 +630,8 @@ public class MainActivity extends Activity {
         if ((e.getSource() & InputDevice.SOURCE_JOYSTICK) != InputDevice.SOURCE_JOYSTICK || e.getAction() != MotionEvent.ACTION_MOVE)
             return super.dispatchGenericMotionEvent(e);
         if (!usingPad) { usingPad = true; updatePadVisibility(); }
+        triggerAxis(0, Math.max(e.getAxisValue(MotionEvent.AXIS_LTRIGGER), e.getAxisValue(MotionEvent.AXIS_BRAKE)));
+        triggerAxis(1, Math.max(e.getAxisValue(MotionEvent.AXIS_RTRIGGER), e.getAxisValue(MotionEvent.AXIS_GAS)));
         float x = e.getAxisValue(MotionEvent.AXIS_HAT_X), y = e.getAxisValue(MotionEvent.AXIS_HAT_Y);
         float sx = e.getAxisValue(MotionEvent.AXIS_X), sy = e.getAxisValue(MotionEvent.AXIS_Y);
         if (Math.abs(sx) > Math.abs(x)) x = sx;
@@ -757,7 +806,7 @@ public class MainActivity extends Activity {
                 s.put("stats", prefs.getBoolean("stats", false));
                 s.put("dev3d", prefs.getBoolean("dev3d", false));
                 s.put("cam3d", cam3d());
-                s.put("depth3d", prefs.getInt("depth3d", 16));
+                s.put("depth3d", prefs.getInt("depth3d", Scene3D.DEF_DEPTH));
                 s.put("back3d", prefs.getString("back3d", "near"));
                 s.put("cave3d", prefs.getBoolean("cave3d", true));
                 s.put("light3d", prefs.getBoolean("light3d", false));
@@ -1120,90 +1169,6 @@ public class MainActivity extends Activity {
             game.theme = t;
             game.postInvalidate();
             border3d.postInvalidate();
-        }
-    }
-
-    // ------------------------------------------------------------------ key bindings
-
-    /** keycode -> button index (Gba.BUTTON_NAMES). Setting a key that's already used swaps the two. */
-    static final class Binds {
-        final android.util.SparseIntArray map = new android.util.SparseIntArray();
-
-        void defaults() {
-            map.clear();
-            map.put(KeyEvent.KEYCODE_DPAD_UP, 0); map.put(KeyEvent.KEYCODE_DPAD_DOWN, 1);
-            map.put(KeyEvent.KEYCODE_DPAD_LEFT, 2); map.put(KeyEvent.KEYCODE_DPAD_RIGHT, 3);
-            map.put(KeyEvent.KEYCODE_BUTTON_A, 4); map.put(KeyEvent.KEYCODE_BUTTON_B, 5);
-            map.put(KeyEvent.KEYCODE_BUTTON_X, 8); map.put(KeyEvent.KEYCODE_BUTTON_Y, 9);
-            map.put(KeyEvent.KEYCODE_BUTTON_SELECT, 6); map.put(KeyEvent.KEYCODE_BUTTON_START, 7);
-            map.put(KeyEvent.KEYCODE_BUTTON_MODE, 10); map.put(KeyEvent.KEYCODE_BUTTON_THUMBL, 11);
-            map.put(KeyEvent.KEYCODE_BUTTON_L1, 17); map.put(KeyEvent.KEYCODE_BUTTON_R1, 18);
-            map.put(KeyEvent.KEYCODE_A, 17); map.put(KeyEvent.KEYCODE_S, 18);
-            map.put(KeyEvent.KEYCODE_BUTTON_L2, 12); map.put(KeyEvent.KEYCODE_BUTTON_R2, 13);
-            map.put(KeyEvent.KEYCODE_Z, 4); map.put(KeyEvent.KEYCODE_X, 5);
-            map.put(KeyEvent.KEYCODE_SHIFT_RIGHT, 6); map.put(KeyEvent.KEYCODE_ENTER, 7);
-            map.put(KeyEvent.KEYCODE_ESCAPE, 10); map.put(KeyEvent.KEYCODE_TAB, 11);
-            map.put(KeyEvent.KEYCODE_F5, 12); map.put(KeyEvent.KEYCODE_F7, 13);
-            map.put(KeyEvent.KEYCODE_F2, 14); map.put(KeyEvent.KEYCODE_BUTTON_THUMBR, 14);
-            map.put(KeyEvent.KEYCODE_PAGE_UP, 15); map.put(KeyEvent.KEYCODE_PAGE_DOWN, 16);
-            map.put(KeyEvent.KEYCODE_F3, 19);
-        }
-
-        void load(String json) {
-            defaults();
-            if (json == null || json.isEmpty()) return;
-            try {
-                JSONObject o = new JSONObject(json);
-                map.clear();
-                Iterator<String> it = o.keys();
-                while (it.hasNext()) { String k = it.next(); map.put(Integer.parseInt(k), o.getInt(k)); }
-                // bindings saved before 0.22 have no 3D CAMERA key: give it F3 when that's free
-                if (map.indexOfValue(19) < 0 && map.get(KeyEvent.KEYCODE_F3, -1) < 0) map.put(KeyEvent.KEYCODE_F3, 19);
-            } catch (Exception e) { defaults(); }
-        }
-
-        String save() {
-            try {
-                JSONObject o = new JSONObject();
-                for (int i = 0; i < map.size(); i++) o.put(String.valueOf(map.keyAt(i)), map.valueAt(i));
-                return o.toString();
-            } catch (Exception e) { return ""; }
-        }
-
-        int button(int code) { return map.get(code, -1); }
-
-        void assign(int code, int idx) {
-            int prev = map.get(code, -1);
-            if (prev == idx) return;
-            List<Integer> old = new ArrayList<Integer>();
-            for (int i = 0; i < map.size(); i++) if (map.valueAt(i) == idx) old.add(map.keyAt(i));
-            if (prev >= 0 && !old.isEmpty()) {
-                map.put(old.get(0), prev);          // swap
-            } else {
-                for (int k : old) {
-                    // keep the other keyboard/pad entries for this button only if they are a different device class
-                    if (isPadKey(k) == isPadKey(code)) map.delete(k);
-                }
-            }
-            map.put(code, idx);
-        }
-
-        static boolean isPadKey(int k) { return KeyEvent.isGamepadButton(k) || (k >= KeyEvent.KEYCODE_DPAD_UP && k <= KeyEvent.KEYCODE_DPAD_CENTER); }
-
-        String describe() {
-            try {
-                JSONArray a = new JSONArray();
-                for (int b = 0; b < Gba.BUTTON_NAMES.length; b++) {
-                    JSONObject o = new JSONObject();
-                    o.put("name", Gba.BUTTON_NAMES[b]);
-                    JSONArray keys = new JSONArray();
-                    for (int i = 0; i < map.size(); i++) if (map.valueAt(i) == b)
-                        keys.put(KeyEvent.keyCodeToString(map.keyAt(i)).replace("KEYCODE_", "").replace("BUTTON_", "").replace("_", " "));
-                    o.put("keys", keys);
-                    a.put(o);
-                }
-                return a.toString();
-            } catch (Exception e) { return "[]"; }
         }
     }
 

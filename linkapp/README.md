@@ -1,4 +1,4 @@
-# Super Mario Advance Link 0.1 (RetroArch) - alpha
+# Super Mario Advance Link 0.2 (RetroArch) - alpha
 
 Super Mario Advance Dual's Link screen on its own: an Android app for the second screen that reads Super Mario Advance (USA, Europe)
 running in RetroArch, the way Shantae Link, Xenogears Link and Metroid Link do. No emulator and no native code (about 170 KB). Nothing
@@ -19,7 +19,8 @@ OPTIONS > 3D VIEW > **3D TAB: ON** adds a 3D tab. Dual draws the 3D view on the 
 view comes to the Link screen. It's Dual's own `Scene3D` and `Renderer3D`, compiled in from `app/src`, fed from RetroArch's memory about 30
 times a second. Cameras under the picture (LOW, TILT, DIORAMA, FAR; tapping the picture steps them), and BLOCK DEPTH, BACK WALL, BACKGROUND,
 PLAYER LIGHT, THICK and ROUND SPRITES in OPTIONS. Away from play (a pause, a door) the last frame stays up, since there is no 2D picture to
-fall back on. The tab is off by default and uses nothing when it isn't on screen.
+fall back on. The tab is off by default and uses nothing when it isn't on screen. The options start the same as Dual's: camera LOW, block depth 20,
+back wall NEAR, background and thick sprites on, player light and round sprites off.
 
 ## How it reads the game
 - `RetroArch.java`: UDP. All the wanted reads go out as `READ_CORE_MEMORY`, then the replies are collected (RetroArch answers everything
@@ -43,6 +44,7 @@ fall back on. The tab is off by default and uses nothing when it isn't on screen
 | Stats travel with save states | Stats are kept on the device and only count while Link runs. A new file clears them when it starts its first level (nothing cleared on it); RESET STATS in OPTIONS. A state loaded in RetroArch doesn't count as a clear, a warp or a death. With several files in turn, they share one set: not separated yet. |
 | Ending card's DEV CODES USED | No playtest codes here, so never shown |
 | Playtest codes, NO SLOWDOWN, borders, touch pad, music on the menu | Dual only: they live in the emulator, or RetroArch has its own |
+| L2, R2, L3 and R3 hotkeys | None: the controller stays with RetroArch and this window never sees it. RetroArch can bind its own save and load keys; the camera is changed by tapping the picture |
 
 ## Build and test
 ```

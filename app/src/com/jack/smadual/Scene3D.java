@@ -31,9 +31,14 @@ final class Scene3D {
     static final int ATLAS_W = 512, ATLAS_H = 512, SLOTS = (ATLAS_W / 8) * (ATLAS_H / 8);
     static final int BD_W = 512, BD_H = 512;
 
+    // What the options start with, Dual and Link alike (their preferences hold what has been changed), and those preferences' names
+    static final String DEF_CAM = "low";
+    static final int DEF_DEPTH = 20;
+    static final String[] PREF_KEYS = { "cam3d", "depth3d", "back3d", "cave3d", "light3d", "thick3d", "round3d", "border3d" };
+
     // options
     volatile String back = "near";
-    volatile int depth = 16;
+    volatile int depth = DEF_DEPTH;
     volatile boolean cave = true, light = false, thick = true;
     volatile byte[] rom;
 

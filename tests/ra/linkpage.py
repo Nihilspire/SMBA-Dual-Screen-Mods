@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 b64 = lambda x: base64.b64encode(x).decode()
 
-def init_js(rom, kit, dump, problem='', trk=None, tab3d=True, settings=None):
+def init_js(rom, kit, dump, problem='', trk=None, tab3d=True, settings=None, stored=None):      # stored: JS that sets up sma.opts, for other installs
     iw, ew = dump[:0x8000], dump[0x8000:0x48000]
     io, pal, vram, oam = dump[0x48000:0x48400], dump[0x48400:0x48800], dump[0x48800:0x60800], dump[0x60800:0x60C00]
     video = vram + pal + oam + io[:0x60]
@@ -14,12 +14,14 @@ def init_js(rom, kit, dump, problem='', trk=None, tab3d=True, settings=None):
     t = [0] * 16
     t[0], t[1], t[2], t[3], t[4], t[5] = trk.get('time', 0), trk.get('deaths', 0), trk.get('cleared', 0), trk.get('lo', 0), trk.get('hi', 0), trk.get('warped', 0)
     trkb = b''.join(int(v).to_bytes(4, 'little') for v in t)
-    s3 = dict(cam3d='tilt', depth3d=16, back3d='near', cave3d=True, light3d=False, thick3d=True, round3d=False); s3.update(settings or {})
+    s3 = dict(cam3d='low', depth3d=20, back3d='near', cave3d=True, light3d=False, thick3d=True, round3d=False); s3.update(settings or {})
+    if stored is None:
+        stored = "try { localStorage.setItem('sma.opts', JSON.stringify({xray:true,markers:true,zl:1,tab3d:%s,tabOff02:true})); } catch (e) {}" % ('true' if tab3d else 'false')
     return """
 function __u(s){ var b=atob(s), a=new Uint8Array(b.length); for(var i=0;i<b.length;i++) a[i]=b.charCodeAt(i); return a; }
 window.__iw=__u('%s'); window.__ew=__u('%s'); window.__video='%s'; window.__romb64='%s'; window.__rom=null; window.__problem=%s;
 window.__gl=null; window.__s3=%s; window.__sent=[];
-try { localStorage.setItem('sma.opts', JSON.stringify({xray:true,markers:true,zl:1,tab3d:%s})); } catch (e) {}
+%s
 function __rd(a){ var r=a>>>24;
   if (r===3) return __iw[a & 0x7FFF]; if (r===2) return __ew[a & 0x3FFFF]; return 0; }
 window.Native = {
@@ -37,7 +39,7 @@ window.Native = {
   menu: function(){__sent.push('MENU_TOGGLE');}, settings3d: function(){ return JSON.stringify(__s3); }, set3d: function(k,v){ __s3[k]= v==='true'?true:v==='false'?false:/^[0-9]+$/.test(v)?+v:v; __sent.push(k+'='+v); },
   view3d: function(on,x,y,w,h){ window.__gl = on ? [x,y,w,h] : null; }
 };
-""" % (b64(iw), b64(ew), b64(video), b64(rom), json.dumps(problem), json.dumps(s3), 'true' if tab3d else 'false', b64(kit), b64(trkb))
+""" % (b64(iw), b64(ew), b64(video), b64(rom), json.dumps(problem), json.dumps(s3), stored, b64(kit), b64(trkb))
 
 def page(br, init, w=620, h=540, scale=2):
     ctx = br.new_context(viewport={'width': w, 'height': h}, device_scale_factor=scale)

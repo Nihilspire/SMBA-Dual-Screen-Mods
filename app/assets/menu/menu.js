@@ -42,7 +42,7 @@
     kitColors();
   }
   window.refresh = function () { refreshInfo(); build(); draw(); music(); };
-  window.show = function (mode) { refreshInfo(); page = 'main'; sel = 0; scroll = 0; confirm = null; thumbs = {}; build(); draw(); music(); };
+  window.show = function (mode) { refreshInfo(); page = 'main'; stack = []; sel = 0; scroll = 0; confirm = null; thumbs = {}; build(); draw(); music(); };
   window.toast = function (m) { toastMsg = m; toastT = tick + 40; draw(); };
   window.onRebind = function () { waiting = -1; loadBinds(); build(); draw(); };
 
@@ -128,9 +128,9 @@
       backRow();
     } else if (page === '3d') {
       opt('3D VIEW', onoff(s.dev3d), function () { set('dev3d', !s.dev3d); });
-      opt('CAMERA', String(s.cam3d || 'tilt').toUpperCase(), function (d) { cycle('cam3d', ['low', 'tilt', 'diorama', 'far'], d); });
-      opt('BLOCK DEPTH', String(s.depth3d || 16), function (d) {
-        var v = (s.depth3d || 16) + 4 * (d || 1); if (v > 48) v = 4; if (v < 4) v = 48; set('depth3d', v); });
+      opt('CAMERA', String(s.cam3d || 'low').toUpperCase(), function (d) { cycle('cam3d', ['low', 'tilt', 'diorama', 'far'], d); });
+      opt('BLOCK DEPTH', String(s.depth3d || 20), function (d) {
+        var v = (s.depth3d || 20) + 4 * (d || 1); if (v > 48) v = 4; if (v < 4) v = 48; set('depth3d', v); });
       opt('BACK WALL', { near: 'NEAR', far: 'DEEP', off: 'OFF' }[s.back3d] || 'NEAR', function (d) { cycle('back3d', ['near', 'far', 'off'], d); });
       opt('BACKGROUND', onoff(s.cave3d), function () { set('cave3d', !s.cave3d); });
       opt('PLAYER LIGHT', onoff(s.light3d), function () { set('light3d', !s.light3d); });

@@ -5,6 +5,11 @@ Two Android apps for Super Mario Advance (USA, Europe), for dual-screen handheld
 SUPER MARIO ADVANCE DUAL
 Everything in one app: the game on one screen (with its own built-in emulator and the optional 3D view) and the Link screen on the other.
 Install it, start it, choose your ROM. The first start plays a few seconds of the game on its own to capture the menu art.
+Hotkeys, all rebindable in Settings > Controls > Controller Buttons:
+  L2 saves to state slot 1 (without asking, so it overwrites what's there)
+  R2 loads state slot 1
+  Left stick click changes the 3D camera
+  Right stick click switches between 2D and 3D
 
 SUPER MARIO ADVANCE LINK
 Only the Link screen, for playing in RetroArch instead. It reads the game over RetroArch's network commands on the same device.
@@ -15,7 +20,7 @@ Only the Link screen, for playing in RetroArch instead. It reads the game over R
 
 The game must be the USA, Europe ROM (CRC32 1E4C6D6A). The controller stays with RetroArch.
 
-The 3D tab is Link's own: OPTIONS > 3D VIEW > 3D TAB ON. It shows the 3D view on the Link screen, since the game's screen is RetroArch's.
+The 3D tab is Link's own and starts off: OPTIONS > 3D VIEW > 3D TAB ON. It shows the 3D view on the Link screen, since the game's screen is RetroArch's.
 Tap the picture or the row under it to change the camera.
 
 ON THE LINK SCREEN

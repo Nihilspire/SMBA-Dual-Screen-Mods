@@ -21,7 +21,7 @@ import javax.microedition.khronos.opengles.GL10;
 final class Renderer3D implements GLSurfaceView.Renderer {
     static final int SNAP = Scene3D.SNAP;
 
-    volatile String camPreset = "tilt";
+    volatile String camPreset = Scene3D.DEF_CAM;
     final Scene3D scene = new Scene3D();
 
     private final Object lock = new Object();

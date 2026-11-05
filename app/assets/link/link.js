@@ -16,7 +16,9 @@
   var lastLvl = -99, lastVid = -99, lastTrk = -99, lastPos = '', still = 0;
   var maxHearts = 2, heartsLevel = -1;
   var store = window.localStorage || { getItem: function () { return null; }, setItem: function () {} };
-  var opts = load('sma.opts', { xray: true, markers: true, zoom: 'near' });
+  var opts = load('sma.opts', { xray: true, markers: true, zoom: 'near', tab3d: false });
+  // Link 0.2: the 3D tab starts off, also for an install that had switched it on in 0.1
+  if (LINK && !opts.tabOff02) { opts.tab3d = false; opts.tabOff02 = true; save('sma.opts', opts); }
   // 0.14: map zoom = one of four levels, tapped through (WIDE, FIT, NEAR, 1:1); FIT shows the area's whole height.
   // (0.13's screen styles are gone; the game's own pause-panel windows are the one look.)
   if (!(opts.zl >= 0 && opts.zl <= 3)) opts.zl = 1;
@@ -558,7 +560,7 @@
   // page (LinkActivity.Bridge.view3d, Dual's Scene3D and Renderer3D fed from RetroArch's memory), with the cameras under it.
   // Tapping the picture steps the camera, as the map's zoom does. Away from play (a door, a pause) the last frame stays up.
   var gl3d = null, glShown = '', s3d = null, CAMS = ['low', 'tilt', 'diorama', 'far'];
-  function settings3d() { if (!s3d) { try { s3d = JSON.parse(Native.settings3d()); } catch (e) { s3d = { cam3d: 'tilt', depth3d: 16, back3d: 'near' }; } } return s3d; }
+  function settings3d() { if (!s3d) { try { s3d = JSON.parse(Native.settings3d()); } catch (e) { s3d = { cam3d: 'low', depth3d: 20, back3d: 'near' }; } } return s3d; }
   function set3d(k, v) { settings3d()[k] = v; Native.set3d(k, String(v)); }
   function nextCam() { set3d('cam3d', CAMS[(CAMS.indexOf(settings3d().cam3d) + 1) % CAMS.length]); }
   window.on3dTap = function () { nextCam(); draw(); };

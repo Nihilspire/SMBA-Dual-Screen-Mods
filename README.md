@@ -19,6 +19,13 @@ NES core swapped for a GBA one.
 - **Super Mario Advance Link** is the second APK: the Link screen on its own, reading the game in RetroArch over its network commands, with a 3D tab only
   it has. See [linkapp/README.md](linkapp/README.md).
 
+Fan-made and not affiliated with Nintendo. The APKs are on the [Releases](https://github.com/Nihilspire/SMBA-Dual-Screen-Mods/releases) page.
+
+## Dual and Link compared
+![Feature checklist: what is the same in Dual and Link, what works differently, and what only one of them has](docs/features.png)
+
+The same list with filters: [docs/features.html](docs/features.html), to open in a browser.
+
 ## Screens
 | Setup | What happens |
 |---|---|
@@ -29,8 +36,16 @@ NES core swapped for a GBA one.
 
 ## Controls
 Touch pad (auto / on / off, opacity), controllers with rebinding (Settings > CONTROLS > CONTROLLER BUTTONS; L and R
-are bindable too), **SELECT+START** or Back opens the pause menu, quick save / load (L2 / R2 by default), turbo,
-fast-forward.
+are bindable too), **SELECT+START** or Back opens the pause menu, turbo, fast-forward (TAB on a keyboard; no pad button until you bind one).
+
+| Hotkey (default) | Does |
+|---|---|
+| L2 | Save to state slot 1, the menu's SLOT 1, without asking |
+| R2 | Load state slot 1 |
+| L3 (left stick click) | Next 3D camera |
+| R3 (right stick click) | Switch between 2D and 3D |
+
+Analog triggers count as L2 and R2 past 60% of the way, whether the pad reports them as axes, keys or both.
 
 ## Launcher and pause menu
 0.8 look (calmer than 0.4): dark ink on cream, a soft gold selection bar, red titles, ON/OFF as coloured words, muted category chips; Link screen cards with a thin brown outline, cream tabs, softened bands and world colours. 0.4 had: bright orange-red selection bar with white text, big text on the main pages when it fits, panels sized to
@@ -372,6 +387,8 @@ whole page dimmed to 40%, instead of the logo on black. No tabs on it, as Xenoge
 delay is a setting (both for Link, both off here), and the Link page has what only Link uses behind `LINK` (the setup screen, the 3D tab and its options, RetroArch's
 state slots). The page in Dual is pixel for pixel 0.42's on every tab checked, and the native library is 0.42's, byte for byte. See [linkapp/README.md](linkapp/README.md).
 
+**0.44 (with Link 0.2):** default hotkeys, the table under Controls. L2 and R2 used a hidden quick save file; they now use slot 1, and say so on screen. L3 was FAST and is now 3D CAMERA, so FAST has no pad button by default. Triggers that only report as axes work now (`Triggers.java`). New 3D defaults: camera LOW, block depth 20, the rest as they were (back wall NEAR, background, thick sprites and 3D borders on, player light and round sprites off). The view itself still starts in 2D. Playtest codes were already behind the Konami code, off and refused by the app while locked; `tests/input/check_defaults.py` now checks that, and `show()` clears the menu's back stack, which could make B leave the launcher page partway through the code. The first start of 0.44 resets an older install's 3D settings and playtest unlock to those defaults, moves L3 off FAST in saved bindings and moves a quick save to slot 1 if that slot is empty. Link 0.2 has the same 3D defaults (same constants, `Scene3D.DEF_*`), and resets 0.1's settings and 3D tab once: the tab stays off until switched on.
+
 ## Build
 ```
 bash tools/setup_toolchain.sh      # bionic headers + stub libs + compiler-rt builtins, android.jar, mGBA @ 7a12d6d + patch
@@ -379,8 +396,8 @@ bash tools/build_apk.sh            # -> out/Super Mario Advance Dual <ver>.apk
 bash tools/build_link_apk.sh       # -> out/Super Mario Advance Link <ver>.apk (no native code, no setup step)
 ```
 apt: clang lld llvm aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headless.
-`out/android/libsmadual.so` is included so the core doesn't have to be rebuilt. Keystore: `tools/smadual.keystore`
-(pass: smadual).
+`out/android/libsmadual.so` is included so the core doesn't have to be rebuilt. The signing keys (`tools/smadual.keystore`, `tools/smalink.keystore`)
+aren't in git. The build makes a new one if there is none, but an APK signed with a new key can't update one signed with the old, so keep them safe.
 
 ## Test
 - `make -C native TARGET=host MGBA=... host` -> `out/host/drive rom script [savedir]`
@@ -393,5 +410,7 @@ apt: clang lld llvm aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headl
 - `tests/scene3d/`: `build.sh`, then `SceneDump rom dump out.s3d` and `shot.py out.png out.s3d [preset] [standin]`
   renders the 3D view with Renderer3D's own shaders in headless Chromium (WebGL).
 - `tests/ra/`, `tests/mock_ra.py`: Link's transport, tracker, kit and page; see [linkapp/README.md](linkapp/README.md).
+- `tests/input/`: `build.sh`, then `java -cp tests/input/out com.jack.smadual.InputCheck binds.json` (default hotkeys, saved bindings, triggers) and
+  `check_defaults.py rom kit dump binds.json outdir` (every default in the source, the Konami lock in the menu, Link's 3D tab).
 - `tests/showcase/`: the release pictures. `spots.py WORK` plays to each spot on the driver (flying along the top so the game really scrolls and spawns what's
   there, characters poked in), `render3d.py WORK OUT` renders each in every camera and the 3D menu's options, `linkshots.py WORK OUT` Link's pictures with the game on top.

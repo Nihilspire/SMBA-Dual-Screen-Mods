@@ -36,7 +36,7 @@ import java.util.zip.CRC32;
  * own ROM for the map, the art and the 3D view.
  */
 public class LinkActivity extends Activity {
-    static final String VERSION = "0.1";
+    static final String VERSION = "0.2";
     static final long ROM_CRC = Gba.SMA_CRC;
     static final int PICK_ROM = 1, SLOTS = 4;
     static final String[] CAMS = { "low", "tilt", "diorama", "far" };
@@ -63,6 +63,7 @@ public class LinkActivity extends Activity {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         prefs = getSharedPreferences("smalink", MODE_PRIVATE);
+        upgradeDefaults();
         romFile = new File(getFilesDir(), "rom.gba");
         ra.setTarget("127.0.0.1", 55355);
         String tb = prefs.getString("trk", "");
@@ -177,10 +178,17 @@ public class LinkActivity extends Activity {
     }
 
     // ------------------------------------------------------------------ 3D settings: the keys and defaults Dual's menu uses
-    String cam3d() { String c = prefs.getString("cam3d", "tilt"); for (String k : CAMS) if (k.equals(c)) return c; return "tilt"; }
+    String cam3d() { String c = prefs.getString("cam3d", Scene3D.DEF_CAM); for (String k : CAMS) if (k.equals(c)) return c; return Scene3D.DEF_CAM; }
+    /** Once, on the first start of 0.2: an install of 0.1 would otherwise keep what it had instead of starting from Dual's defaults. */
+    private void upgradeDefaults() {
+        if (prefs.getInt("defaults", 0) >= 2) return;
+        SharedPreferences.Editor ed = prefs.edit();
+        for (String k : Scene3D.PREF_KEYS) ed.remove(k);
+        ed.putInt("defaults", 2).apply();
+    }
     void apply3d() {
         r3d.camPreset = cam3d();
-        r3d.scene.depth = prefs.getInt("depth3d", 16);
+        r3d.scene.depth = prefs.getInt("depth3d", Scene3D.DEF_DEPTH);
         r3d.scene.back = prefs.getString("back3d", "near");
         r3d.scene.cave = prefs.getBoolean("cave3d", true);
         r3d.scene.light = prefs.getBoolean("light3d", false);
@@ -246,7 +254,7 @@ public class LinkActivity extends Activity {
         }
         @JavascriptInterface public void menu() { ra.send("MENU_TOGGLE"); }
         @JavascriptInterface public String settings3d() {
-            return "{\"cam3d\":\"" + cam3d() + "\",\"depth3d\":" + prefs.getInt("depth3d", 16) + ",\"back3d\":\"" + prefs.getString("back3d", "near")
+            return "{\"cam3d\":\"" + cam3d() + "\",\"depth3d\":" + prefs.getInt("depth3d", Scene3D.DEF_DEPTH) + ",\"back3d\":\"" + prefs.getString("back3d", "near")
                 + "\",\"cave3d\":" + prefs.getBoolean("cave3d", true) + ",\"light3d\":" + prefs.getBoolean("light3d", false)
                 + ",\"thick3d\":" + prefs.getBoolean("thick3d", true) + ",\"round3d\":" + prefs.getBoolean("round3d", false) + "}";
         }
