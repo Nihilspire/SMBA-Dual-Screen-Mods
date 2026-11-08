@@ -6,8 +6,19 @@
 void gba_log(const char *msg);                 /* provided by the frontend */
 int gba_init(const char *sysdir, const char *savedir);
 int gba_load(const char *path);
+int gba_load_mem(const void *buf, size_t n, const char *path);   /* the ROM already in memory (mGBA keeps its own copy) */
+void gba_skip_next_render(void);
+void gba_enable_layer(int id, int on);         /* 0-3 BG0-BG3, 4 sprites */
+void gba_set_threaded(int on);                 /* 3DS build only: the drawing on another core, from the next gba_load */
+void gba_set_output(uint16_t *p, int stride);  /* 3DS build only: where the picture goes */
+uint64_t gba_wait_ticks(void);                 /* 3DS build only: ticks spent waiting for the drawing core since the last call */
+void gba_set_frames(uint16_t *a, uint16_t *b, uint16_t *c);   /* 3DS build only: three linear buffers (256 stride x 160) for frames from the drawing core */
+const uint16_t *gba_take_frame(void);          /* 3DS build only: the newest picture not yet taken, or NULL */
+int gba_frames_async(void);                    /* 3DS build only */
+void gba_nudge(void);                          /* 3DS build only: wake the drawing core */
 void gba_set_savedir(const char *savedir);    /* where game.sav lives; takes effect at the next gba_load */
 /* extract.c: first-start capture of the title and pause screens' video memory (see that file) */
+extern int (*sma_extract_tick)(int frame);    /* optional: called every frame; return nonzero to give up */
 size_t sma_extract_size(void);
 int sma_extract(uint8_t *out, size_t cap);
 void gba_unload(void);

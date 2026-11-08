@@ -29,6 +29,7 @@ static int oam_tile(int i) { return (gba_peek(0x07000004u + i * 8) | gba_peek(0x
 static int io16(uint32_t a) { return gba_peek(a) | gba_peek(a + 1) << 8; }
 
 size_t sma_extract_size(void) { return 8 + 3 * SHOT; }
+int (*sma_extract_tick)(int frame);
 
 /* ROM must be loaded (fresh, empty save). Returns bytes written, or <0: -1 buffer, -2 timeout, -3 title check,
  * -4 pause check, -5 play check (the HUD's two life hearts must be OAM 0 and 1). */
@@ -66,6 +67,7 @@ int sma_extract(uint8_t *out, size_t cap) {
     gba_set_pad(pad);
     gba_run();
     while (gba_audio(snd, 16384) > 0) {}
+    if (sma_extract_tick && sma_extract_tick(f)) { gba_set_pad(0); return -2; }
   }
   gba_set_pad(0);
   return have == 2 && play ? (int)sma_extract_size() : -2;

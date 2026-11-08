@@ -357,6 +357,12 @@ The menu art Dual captures is all uncompressed in the ROM: the title's maps at `
 item sprites at `2DBF5C` (a 2D sheet: rows are 0x400 apart), `2E6FDC`+, `2C41D0`+; OBJ palettes 1, 2, 4, 9 at `3BA6D0`, `3BA6F0`, `3BA730`, `3BA770`, 7 at `3BAA50`, 14 at
 `2F2CBC`. The full table of which piece goes where is `KitRom.T` in `linkapp`.
 
+## The main loop's wait (3DS port)
+
+The main loop at `08001BC6` runs the mode's handler from `0833D5B4`, clears bit 0 of `03001178`, then spins from `08001CBC` to `08001CDE`–`08001CFC` until the vblank interrupt sets that bit. It never calls Halt or
+VBlankIntrWait (so the app's lag meter counts every frame), reads nothing else and has no side effects: about 3700 reads of `03001178` a frame, over half the CPU's time. Title, character select and play all use this loop.
+`native/ctr` tells mGBA it's an idle loop (`idleLoop = 08001CDE`), which halts until the next interrupt.
+
 ## Not mapped yet
 
 SMA-only object types besides the Ace Coins (`74`–`78` …), grass `9A`, the character stats card, the

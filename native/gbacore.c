@@ -8,6 +8,9 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include "gbacore.h"
+#ifdef SMA_CTR
+#include <mgba/feature/video-logger.h>
+#endif
 
 /* from mgba-dual.patch */
 extern int gbx_overclock;
@@ -23,6 +26,51 @@ static int loaded;
 static int fe_var_update, fe_cc, fe_blend;
 static unsigned lag_frames;
 static uint8_t *last_save; static size_t last_save_n;
+#ifdef SMA_CTR
+static int fe_threaded;
+void gba_set_threaded(int on) { fe_threaded = on; }
+/* where the picture goes: linear memory for the 3DS's GPU, at its own stride */
+static uint16_t *fb_out; static int fb_stride = 240;
+void gba_set_output(uint16_t *p, int stride) { fb_out = p; fb_stride = stride; }
+#endif
+#ifdef __3DS__
+/* how long the main core sat waiting for the drawing core at the end of a frame, for the timing line */
+#include <3ds.h>
+#include <mgba/internal/gba/renderers/proxy.h>
+static uint64_t fe_wait_ticks;
+static void (*fe_real_wait)(struct mVideoLogger *);
+static void fe_timed_wait(struct mVideoLogger *l) { uint64_t t = svcGetSystemTick(); fe_real_wait(l); fe_wait_ticks += svcGetSystemTick() - t; }
+uint64_t gba_wait_ticks(void) { uint64_t t = fe_wait_ticks; fe_wait_ticks = 0; return t; }
+/* 0.3: frames from the drawing core without stopping the main core. Waiting for the picture at each frame's end cost the main core about a third of its frame in Azahar, so the
+   drawing core now finishes on its own: when a frame is done it copies it out itself, into one of three buffers that go round between the two cores (a triple buffer: the drawing core
+   always has one to write, the main core always has one to show, and the third is the newest finished frame). GBA LCD colours and frame blend run on the main core after the frame,
+   so with either of them on it goes back to waiting. */
+static uint16_t *fe_lin[3]; static int fe_w, fe_s = 1, fe_async; static volatile int fe_mid = 2;
+static void (*fe_real_finish)(struct GBAVideoRenderer *);
+static void fe_finish(struct GBAVideoRenderer *r) {
+  fe_real_finish(r);
+  if (!fe_async) return;
+  uint16_t *o = fe_lin[fe_w];
+  memcpy(o, outputBuffer, 256 * 160 * 2);
+  GSPGPU_FlushDataCache(o, 256 * 160 * 2);
+  fe_w = __atomic_exchange_n(&fe_mid, fe_w | 4, __ATOMIC_ACQ_REL) & 3;
+}
+void gba_set_frames(uint16_t *a, uint16_t *b, uint16_t *c) { fe_lin[0] = a; fe_lin[1] = b; fe_lin[2] = c; }
+/* the newest picture not yet taken, or NULL: 256 stride x 160 */
+const uint16_t *gba_take_frame(void) {
+  if (!fe_async) { if (!fb_new) return NULL; fb_new = 0; return fb_out; }
+  if (!(__atomic_load_n(&fe_mid, __ATOMIC_ACQUIRE) & 4)) return NULL;
+  fe_s = __atomic_exchange_n(&fe_mid, fe_s, __ATOMIC_ACQ_REL) & 3;
+  return fe_lin[fe_s];
+}
+int gba_frames_async(void) { return fe_async; }
+/* The drawing thread is only woken every 16 scanlines, and the frame's last packets come after the last of those. */
+void gba_nudge(void) {
+  struct mVideoLogger *l = core ? core->videoLogger : NULL;
+  if (!l || !l->wake) return;
+  l->lock(l); l->wake(l, 15); l->unlock(l);
+}
+#endif
 
 static void fe_log(enum retro_log_level l, const char *fmt, ...) {
   char b[512]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap);
@@ -59,6 +107,12 @@ static void fe_video(const void *d, unsigned w, unsigned h, size_t pitch) {
   if (!d) return;
   if (w > 240) w = 240; if (h > 160) h = 160;
   fb_w = w; fb_h = h;
+#ifdef SMA_CTR
+#ifdef __3DS__
+  if (fe_async) return;                 /* the drawing core copies it out itself: see fe_finish */
+#endif
+  if (fb_out) { for (unsigned y = 0; y < h; y++) memcpy(fb_out + y * fb_stride, (const uint8_t *)d + y * pitch, w * 2); fb_new = 1; return; }
+#endif
   for (unsigned y = 0; y < h; y++) memcpy(fb + y * w, (const uint8_t *)d + y * pitch, w * 2);
   fb_new = 1;
 }
@@ -80,6 +134,10 @@ void gba_set_overclock(int on) { gbx_overclock = on ? 1 : 0; }
 void gba_set_color_correction(int on) { fe_cc = on; fe_var_update = 1; }
 void gba_set_frame_blend(int on) { fe_blend = on; fe_var_update = 1; }
 unsigned gba_lag_frames(void) { return lag_frames; }
+/* The next frame isn't drawn (the 3DS's FRAME SKIP): the scanlines aren't rendered, everything else runs. */
+void gba_skip_next_render(void) { if (loaded) ((struct GBA *)core->board)->video.frameskipCounter = 1; }
+/* A layer left out of the picture (0-3 BG0-BG3, 4 sprites). The game doesn't know. */
+void gba_enable_layer(int id, int on) { if (loaded) core->enableVideoLayer(core, (size_t)id, on != 0); }
 
 void gba_set_savedir(const char *save) {
   snprintf(fe_savedir, sizeof fe_savedir, "%s", save);
@@ -111,9 +169,26 @@ int gba_save_flush(void) {
   if (last_save && last_save_n == n && !memcmp(last_save, s, n)) return 0;
   char tmp[640]; snprintf(tmp, sizeof tmp, "%s.tmp", fe_savepath);
   FILE *f = fopen(tmp, "wb"); if (!f) return -1;
-  fwrite(s, 1, n, f); fclose(f); rename(tmp, fe_savepath);
+  fwrite(s, 1, n, f); fclose(f);
+#ifdef SMA_CTR
+  remove(fe_savepath);        /* the 3DS's SD card won't rename over a file that exists */
+#endif
+  rename(tmp, fe_savepath);
   free(last_save); last_save = malloc(n); memcpy(last_save, s, n); last_save_n = n;
   return 1;
+}
+int gba_load_mem(const void *buf, size_t n, const char *path) {
+  struct retro_game_info gi = { path, buf, n, NULL };
+  if (loaded) { gba_save_flush(); retro_unload_game(); }
+  loaded = retro_load_game(&gi);     /* mGBA copies the ROM */
+#ifdef SMA_CTR
+  /* mGBA's threaded video: the renderer on another core, fed from a queue. Read at the core's first reset, inside the first retro_run. */
+  if (loaded && fe_threaded) mCoreConfigSetDefaultIntValue(&core->config, "threadedVideo", 1);
+#endif
+  if (loaded) { retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD); save_load(); }
+  lag_frames = 0;
+  sma_track_clear();
+  return loaded ? 0 : -3;
 }
 int gba_load(const char *path) {
   FILE *f = fopen(path, "rb"); if (!f) return -1;
@@ -121,26 +196,48 @@ int gba_load(const char *path) {
   void *buf = malloc(n);
   if (fread(buf, 1, n, f) != (size_t)n) { fclose(f); free(buf); return -2; }
   fclose(f);
-  struct retro_game_info gi = { path, buf, (size_t)n, NULL };
-  if (loaded) { gba_save_flush(); retro_unload_game(); }
-  loaded = retro_load_game(&gi);     /* mGBA copies the ROM */
+  int r = gba_load_mem(buf, (size_t)n, path);
   free(buf);
-  if (loaded) { retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD); save_load(); }
-  lag_frames = 0;
-  sma_track_clear();
-  return loaded ? 0 : -3;
+  return r;
 }
 void gba_unload(void) { if (loaded) { gba_save_flush(); retro_unload_game(); } loaded = 0; }
 void gba_reset(void) { if (loaded) retro_reset(); sma_track_clear(); }
 void gba_set_pad(unsigned bits) { pad = bits; }
 void gba_run(void) {
   if (!loaded) return;
+#ifdef SMA_CTR
+  /* The game's main loop spins on the vblank flag (03001178 bit 0) from 08001CDE, reading nothing else and never halting, which is half
+     of a frame's work. mGBA halts until the next interrupt when the CPU keeps branching to its idle loop address. Set here, not in
+     mGBA's table of known games, so the Android build's emulation stays as it is. */
+  ((struct GBA *)core->board)->idleLoop = 0x08001CDE;
+#ifdef __3DS__
+  if (core->videoLogger) {
+    struct mVideoLogger *vl = core->videoLogger;
+    struct GBAVideoProxyRenderer *px = (struct GBAVideoProxyRenderer *)((struct GBA *)core->board)->video.renderer;
+    if (vl->wait != fe_timed_wait) { fe_real_wait = vl->wait; vl->wait = fe_timed_wait; }
+    if (px->backend->finishFrame != fe_finish) { fe_real_finish = px->backend->finishFrame; px->backend->finishFrame = fe_finish; }
+    fe_async = fe_lin[0] && !fe_cc && !fe_blend;
+    vl->waitOnFlush = !fe_async;                    /* with no copy on the other core, the picture must be whole when retro_run hands it over */
+  } else fe_async = 0;
+#endif
+#endif
   unsigned w0 = gbx_vblank_waits;
   retro_run();
   if (gbx_vblank_waits == w0) lag_frames++;
+#ifdef __3DS__
+  if (fe_async) gba_nudge();
+#endif
   sma_track();
 }
-const uint16_t *gba_frame(int *w, int *h, int *fresh) { *w = fb_w; *h = fb_h; *fresh = fb_new; fb_new = 0; return fb; }
+const uint16_t *gba_frame(int *w, int *h, int *fresh) {
+#ifdef SMA_CTR
+#ifdef __3DS__
+  if (fe_async) { *w = 256; *h = 160; *fresh = 1; return fe_lin[fe_s]; }
+#endif
+  if (fb_out) { *w = fb_stride; *h = fb_h; *fresh = fb_new; return fb_out; }   /* *w is the stride here */
+#endif
+  *w = fb_w; *h = fb_h; *fresh = fb_new; fb_new = 0; return fb;
+}
 int gba_audio(int16_t *out, int max) { int n = alen < max ? alen : max; memcpy(out, abuf, n * 2);
   memmove(abuf, abuf + n, (alen - n) * 2); alen -= n; return n; }
 double gba_fps(void) { struct retro_system_av_info av; retro_get_system_av_info(&av); return av.timing.fps; }

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "gbacore.h"
 #include "libretro.h"
 void gba_log(const char *m) { fputs(m, stderr); }
@@ -72,6 +73,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(cmd, "trk")) { extern uint32_t sma_t[16];   /* the Dual tracker: time deaths cleared whoLo whoHi warped flags */
       printf("trk"); for (int i = 0; i < 7; i++) printf(" %08X", sma_t[i]); printf("\n"); }
     else if (!strcmp(cmd, "trkreset")) sma_track_reset();        /* what the app does for a dev warp */
+    else if (!strcmp(cmd, "layer")) gba_enable_layer(atoi(a), atoi(b));   /* layer 0-4 0|1: leave a layer out of the picture */
+    else if (!strcmp(cmd, "clock")) {                                     /* clock N: N frames, prints microseconds per frame */
+      struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0); step(atoi(a)); clock_gettime(CLOCK_MONOTONIC, &t1);
+      printf("clock %.1f\n", ((t1.tv_sec - t0.tv_sec) * 1e6 + (t1.tv_nsec - t0.tv_nsec) / 1e3) / atoi(a)); }
     else if (!strcmp(cmd, "oc")) gba_set_overclock(atoi(a));
     else if (!strcmp(cmd, "lag")) printf("frame %ld lag %u\n", frames, gba_lag_frames());
     else if (!strcmp(cmd, "flush")) printf("flush %d\n", gba_save_flush());

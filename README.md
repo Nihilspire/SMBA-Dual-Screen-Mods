@@ -80,6 +80,10 @@ The launcher and pause menu are drawn in the game's font, with the title screen'
 - **Link:** a Java app with no native code, reading RetroArch's memory over its network commands. See [linkapp/README.md](linkapp/README.md).
 - **RAM / ROM map:** everything the apps read from the game is in [RAM-MAP.md](RAM-MAP.md).
 
+## 3DS
+Super Mario Advance Dual 3DS (0.32-alpha), for **New 3DS and New 2DS only**: this core on the top screen and the Link screen in C on the touch screen, with everything here except the 3D view and the Android screen modes. Download the `(SD root)` zip from [Releases](https://github.com/Nihilspire/SMBA-Dual-Screen-Mods/releases), extract it at the root of the SD card and put your ROM in `3ds/sma-dual/`. Source, how to run it and what's been tested: [native/ctr/README.md](native/ctr/README.md). Its changes to shared
+code: `gbacore.c` and `extract.c` gain `gba_load_mem`, `gba_skip_next_render`, `gba_enable_layer` and `sma_extract_tick`, unused here (`gbacore.c`'s threaded video, GPU output and picture hand-over are compiled for the 3DS only); `mgba-dual.patch` takes the overclock's sums out of the main loop when it's off, which leaves the emulation byte-identical (RAM, VRAM and pictures, 400 frames with it off and on). The idle loop that halves a frame's cost there (RAM-MAP.md) is 3DS only.
+
 ## Build
 ```
 bash tools/setup_toolchain.sh      # bionic headers + stub libs + compiler-rt builtins, android.jar, mGBA @ 7a12d6d + patch
@@ -91,7 +95,7 @@ apt: clang lld llvm aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headl
 
 ## Test
 - `make -C native TARGET=host MGBA=... host` -> `out/host/drive rom script [savedir]`
-  (run/tap/shot/dump/save/load/peek/poke/rec/trace/rtrace/trk/trkreset/oc/lag/extract). `trk` prints the Dual tracker. `extract file` runs the first-start
+  (run/tap/shot/dump/save/load/peek/poke/rec/trace/rtrace/trk/trkreset/oc/lag/extract/layer/clock). `trk` prints the Dual tracker. `layer id 0|1` leaves a layer out of the picture (4 is the sprites); `clock N` times N frames of the core. `extract file` runs the first-start
   capture on a freshly loaded ROM (use an empty savedir). `dump` = IWRAM | EWRAM | IO | PAL | VRAM | OAM.
   `trace lo hi max file` logs every CPU write in a range with PC and LR; `rec N buttons file` appends IWRAM per frame.
 - `tests/linktest.py rom dump out [js]`: Link page in headless Chromium with a mock Native fed from a dump.
