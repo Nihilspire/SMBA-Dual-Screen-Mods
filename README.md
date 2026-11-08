@@ -1,114 +1,142 @@
 # Super Mario Advance Dual
 
-Android apps for playing Super Mario Advance (USA, Europe) on two screens: the game on one, and a companion screen on the other with live status, a map of the area you're in and a chart of every level. Dual also has an optional 3D view of the levels. Fan-made and not affiliated with Nintendo.
+Super Mario Advance (GBA) on two screens: the game on one, a **Super Mario Advance Link** companion screen on the
+other. It shows live status, a map of the area with what's hidden in the grass, a chart of every level's Ace Coins,
+and save state shortcuts. It runs as an Android app (Surface Duo, dual-screen handhelds, a second display, or split
+screen) and on the New 3DS and New 2DS. There's also **Super Mario Advance Link**, the companion screen on its own,
+for playing in RetroArch if you want to keep RetroAchievements support.
 
-| App | What it is |
+**No game files are included.** You supply your own *Super Mario Advance (USA, Europe)* ROM (CRC32 `1E4C6D6A`). The
+font, menu art, sprites, title logo and each area's objects are read from it at runtime, and the maps from the
+running game.
+
+## Screenshots
+Game on the top screen, Link screen below. The first six are the New 3DS port in the Azahar emulator; the last four
+are the Android app's experimental 3D view, in the AYN Thor's layout.
+
+<p>
+<img src="docs/screenshots/launcher-3ds.png" width="24%" alt="Launcher, themed from your own ROM (New 3DS)">
+<img src="docs/screenshots/4-2-whales-map-3ds.png" width="24%" alt="4-2, whales, map zoomed in (New 3DS)">
+<img src="docs/screenshots/1-1-chart-3ds.png" width="24%" alt="1-1, integer scale with the HUD in the borders, chart (New 3DS)">
+<img src="docs/screenshots/3-1-lcd-colours-3ds.png" width="24%" alt="3-1, GBA LCD colours (New 3DS)">
+</p>
+<p>
+<img src="docs/screenshots/1-3-save-states-3ds.png" width="24%" alt="1-3, save states on the Link screen (New 3DS)">
+<img src="docs/screenshots/ending-card-3ds.png" width="24%" alt="Ending card to sign (New 3DS)">
+</p>
+<p>
+<img src="docs/screenshots/4-2-whales-3d.png" width="24%" alt="4-2, whales (3D view, Low camera)">
+<img src="docs/screenshots/1-1-log-bridge-3d.png" width="24%" alt="1-1, log bridge (3D view, block depth 8)">
+<img src="docs/screenshots/6-3-pyramid-3d.png" width="24%" alt="6-3, pyramid (3D view, flat sprites)">
+<img src="docs/screenshots/7-2-castle-3d.png" width="24%" alt="7-2, the castle (3D view, player light)">
+</p>
+
+## AI-assisted?
+Feel free to skip over if you feel strongly about it. Claude's `Opus 5.5` was used for ram mapping and initial coding and `Qwen-3-coding` was used for code review. Code is open-source, feel free to use as a base and human it up.
+
+## Downloads
+See [Releases](../../releases). What changed in each version: [CHANGELOG.md](CHANGELOG.md) (Android) and
+[native/ctr/README.md](native/ctr/README.md) (3DS).
+
+| File | What it is |
 |---|---|
-| **Super Mario Advance Dual** | Everything in one APK: its own emulator (mGBA), the game on one screen, the Link screen on the other, and the 3D view on the game's screen. |
-| **Super Mario Advance Link** | Only the Link screen, for playing in RetroArch on the same device. It reads the game over RetroArch's network commands and has a 3D tab of its own. See [linkapp/README.md](linkapp/README.md). |
+| `Super.Mario.Advance.Dual.<ver>.apk` | Android: emulator + Link screen in one app |
+| `Super.Mario.Advance.Link.<ver>.apk` | Android: Link screen only, reading Super Mario Advance running in RetroArch. Works with RetroAchievements (in hardcore mode RetroArch refuses its save state buttons). |
+| `Super.Mario.Advance.Dual.3DS.<ver>.SD.root.zip` | New 3DS / New 2DS: extract at the root of the SD card for the `.3dsx` (Homebrew Launcher) and the `.cia` (FBI) |
 
-Download the APKs from [Releases](https://github.com/Nihilspire/SMBA-Dual-Screen-Mods/releases). What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+## Features
+- **Link screen:**
+  - Status: world, level and area (or SUBSPACE), character, hearts, lives, score, cherries, coins, the level's Ace
+    Coins and Yoshi eggs, the star, stopwatch and Subspace timers, play time, deaths and levels cleared.
+  - Map of the whole area in the game's own tiles and background. It follows you; tap for four zooms, drag to look
+    around. Shows what's hidden in the grass, every Ace Coin (red where you still need it), mushroom spots, the key,
+    the crystal ball, the exit and the boss.
+  - Chart of all 20 levels: Ace Coins, who cleared each one, warped levels and the totals.
+  - Cards for Bonus Chance and Mario Bros. Classic, and an ending card with the run's stats to sign with your finger.
+- **Save states:** 4 slots with screenshots, plus quick save/load to slot 1 and an auto state on exit.
+- **Screens:**
+  - Surface Duo hinge, a second display, split screen (side by side / top and bottom with a hinge gap, swappable),
+    or one screen with a side panel or overlay.
+  - 3:2 borders themed from the level's own blocks, with hearts, lives, cherries, Ace Coins, level, character and
+    play time in them.
+- **Controls:** Touch pad support and controller support with rebinding, turbo and fast-forward. Default hotkeys:
+  L2 / R2 save / load slot 1, L3 next 3D camera, R3 2D / 3D.
+- **NO SLOWDOWN:** the emulator's overclock (CPU instructions at half their cycles), on by default.
+- **Menus from your ROM:** the launcher and pause menu use the game's font, title backdrop and pause panel, captured
+  on first start.
+- **Launcher music:** "Curtain Call", synthesized menu music.
+- **Experimental 3D view:** the level rebuilt in 3D every frame from the live tile map, with the game's parallax
+  layers behind and the HUD flat in front. Four cameras (Low, Tilt, Diorama, Far), block depth, back wall,
+  background, player light, thick or round sprites, and 3D borders. Super Mario Advance Link has it in a tab of its
+  own, off by default.
+- **Playtest codes:** hidden behind the Konami code on the launcher, off by default.
+- **New 3DS / New 2DS:** the same core, Link screen and menus, written in C: the game on the top screen, Link on the
+  touch screen. Everything above but the 3D view and the Android screen modes. See
+  [native/ctr/README.md](native/ctr/README.md).
 
-**Nothing from the game ships.** Both apps need your own ROM of Super Mario Advance (USA, Europe), CRC32 `1E4C6D6A`. The font, the menu graphics and every picture on the Link screen come from that ROM and the running game.
+Dual and Link side by side: [docs/features.html](docs/features.html).
 
-![Feature checklist: what is the same in Dual and Link, what works differently, and what only one of them has](docs/features.png)
-
-The same list with filters: [docs/features.html](docs/features.html), to open in a browser.
-
-## Getting started
-**Dual:** install it, start it and choose your ROM. The first start (and the first after choosing a new ROM) plays the game for about a second in the background, with an empty throwaway save, to capture the menu art. Your own save is never opened. The game's battery save is kept in the app's files (`game.sav`) and written when you pause, quit or leave the app.
-
-**Link:**
-1. Install RetroArch Nightly.
-2. In RetroArch: Settings > Network > Network Commands ON, Network Command Port 55355.
-3. Load the game with the mGBA core.
-4. Start Link on the second screen, tap CHOOSE ROM and pick the same ROM file. You only do this once.
-
-## Screens
-| Setup | What happens |
+## Source layout
+| Path | |
 |---|---|
-| Surface Duo, app spanned | Game on one screen, Link on the other, split at the hinge. |
-| Second display (AYN Thor style, cast/HDMI) | Link goes to the second display as a Presentation. |
-| One screen | Game in 3:2 with borders themed from the level's own blocks; hearts, lives, cherries, Ace Coins, level, character and play time in the borders. Link via Pause > LINK SCREEN or Settings > LINK SIDE PANEL. |
-| Anything else | Settings > SCREENS > SPLIT: SIDE BY SIDE / TOP + BOTTOM (+ HINGE GAP), SWAP SCREENS. |
+| `app/` | Android app (Java, no AndroidX). `assets/menu` = launcher/pause menu, `assets/link` = Link screen (HTML/JS) |
+| `native/` | mGBA frontend (`gbacore.c`), JNI layer, play-stat tracker, first-start capture, desktop test driver (`drive.c`), `mgba-dual.patch`. `ctr/` = the New 3DS port (libctru, C) |
+| `linkapp/` | Super Mario Advance Link for Android (WebView + RetroArch network commands) |
+| `tools/` | build scripts, toolchain setup, JNI and log headers |
+| `tests/` | page, menu, 3D view, input and RetroArch tests, and the release pictures (they need your ROM and local dumps; not included) |
+| `docs/` | Dual against Link feature checklist, screenshots |
+| `out/` | `android/libsmadual.so`, prebuilt, so the APK builds without rebuilding the core |
 
-## Controls
-Touch pad (auto / on / off, opacity), controllers with rebinding (Settings > CONTROLS > CONTROLLER BUTTONS; L and R
-are bindable too), **SELECT+START** or Back opens the pause menu, turbo, fast-forward (TAB on a keyboard; no pad button until you bind one).
-
-| Hotkey (default) | Does |
-|---|---|
-| L2 | Save to state slot 1, the menu's SLOT 1, without asking |
-| R2 | Load state slot 1 |
-| L3 (left stick click) | Next 3D camera |
-| R3 (right stick click) | Switch between 2D and 3D |
-
-Analog triggers count as L2 and R2 past 60% of the way, whether the pad reports them as axes, keys or both.
-
-## The Link screen
-- **Status:** world and level, area (or SUBSPACE), your character, hearts at the meter's real size, lives, score, cherries toward a Starman, coins, the level's five Ace Coins and Yoshi eggs, the star, stopwatch and Subspace timers, play time, deaths, levels cleared and the Ace Coin total. The status line says GAME OVER, OUCH or POWER JUMP when they apply.
-- **Map:** the whole area in the game's own tiles, over the game's own background. It follows you like a game camera; tap it to step through four zooms and drag to look around. Markers show what's hidden in the grass (with the game's own item icons), every Ace Coin in the area (red where you still need it), mushroom spots, the key, the crystal ball, the exit, the boss and the Yoshi Challenge's eggs. A line under the map lists what's hidden, Ace Coins left first.
-- **Chart:** all 20 levels with their five Ace Coins, who cleared each one (that character's sprite), warped levels and the totals.
-- **Options:** save states with pictures, map options and the marker legend.
-- **Other screens:** a Bonus Chance card, the Mario Bros. Classic scoreboard, the game's logo (dimmed) on its menus and at character select, and through the ending, a card with the run's stats to sign with your finger.
-
-## 3D view (experimental)
-Settings > 3D VIEW, or R3. Each 8x8 cell of the level is built from the live tile map and the level data: ground and blocks become blocks, scenery like grass and vines becomes cut-outs, and hills, clouds, jars, logs, water and pyramids get shapes of their own. The game's parallax layers and its sky gradient sit behind, and the HUD stays flat in front. The view is 3D only during play; the title, menus, character select, pause and transitions show the normal picture.
-
-| Option | Default | Choices |
-|---|---|---|
-| Camera (L3, or F3 on a keyboard) | LOW | LOW, TILT, DIORAMA, FAR |
-| Block depth (Page Up / Page Down) | 20 | 4 to 48 |
-| Back wall | NEAR | NEAR, DEEP, OFF. It only changes the picture in a few places, 5-3's cave the most. |
-| Background | ON | ON, OFF |
-| Player light | OFF | ON, OFF |
-| Thick sprites | ON | ON, OFF |
-| Round sprites | OFF | ON, OFF |
-| 3D borders | ON | ON, OFF |
-
-`Scene3D.java` builds the geometry (no Android code, so it also runs on the desktop) and `Renderer3D.java` draws it.
-
-## Menus and settings
-The launcher and pause menu are drawn in the game's font, with the title screen's backdrop, the game's pause panel and its arrow, all from the first-start capture. If the capture fails, or SETTINGS > SYSTEM > MENU GRAPHICS is set to DRAWN, a drawn look-alike is used; REBUILD MENU GRAPHICS captures again. The launcher plays "Curtain Call", an original shuffle synthesised in WebAudio.
-- **Save states:** 4 slots with screenshots, plus an auto state on exit.
-- **Settings:** DISPLAY (3:2 or stretch, integer scale, GBA LCD colours, frame blend, borders, FPS), SCREENS, 3D VIEW, CONTROLS, SOUND, GAMEPLAY (NO SLOWDOWN, on by default) and SYSTEM.
-- **Playtest codes:** up up down down left right left right B A on the launcher shows them (again to hide them): infinite life and lives, refill life, Starman, stopwatch, 4 cherries, +5 lives, set play time and warp to any level. They're off by default.
-
-## How it's made
-- **Emulator:** mGBA, libretro fork (MPL-2.0, github.com/libretro/mgba @ 7a12d6d) plus `native/mgba-dual.patch` (NO SLOWDOWN overclock, a vblank-wait counter, and a write-trace hook for desktop builds). mGBA's `libretro.c` is compiled into `native/gbacore.c` (its `core` is static), statically linked into `libsmadual.so` with the JNI layer (`native/gbajni.c`), the play-stat tracker (`native/smatrack.c`) and the first-start menu capture (`native/extract.c`). Built-in HLE BIOS: no BIOS file needed.
-- **Base:** built on Mario 2 Dual 0.1 (itself on Metroid Dual 0.45): the same frontend, screens, controls, pacing and menus, with the NES core swapped for a GBA one.
-- **Link:** a Java app with no native code, reading RetroArch's memory over its network commands. See [linkapp/README.md](linkapp/README.md).
-- **RAM / ROM map:** everything the apps read from the game is in [RAM-MAP.md](RAM-MAP.md).
-
-## 3DS
-Super Mario Advance Dual 3DS (0.32-alpha), for **New 3DS and New 2DS only**: this core on the top screen and the Link screen in C on the touch screen, with everything here except the 3D view and the Android screen modes. Download the `(SD root)` zip from [Releases](https://github.com/Nihilspire/SMBA-Dual-Screen-Mods/releases), extract it at the root of the SD card and put your ROM in `3ds/sma-dual/`. Source, how to run it and what's been tested: [native/ctr/README.md](native/ctr/README.md). Its changes to shared
-code: `gbacore.c` and `extract.c` gain `gba_load_mem`, `gba_skip_next_render`, `gba_enable_layer` and `sma_extract_tick`, unused here (`gbacore.c`'s threaded video, GPU output and picture hand-over are compiled for the 3DS only); `mgba-dual.patch` takes the overclock's sums out of the main loop when it's off, which leaves the emulation byte-identical (RAM, VRAM and pictures, 400 frames with it off and on). The idle loop that halves a frame's cost there (RAM-MAP.md) is 3DS only.
-
-## Build
+## Building
+Android (no NDK needed; see `tools/setup_toolchain.sh`):
 ```
-bash tools/setup_toolchain.sh      # bionic headers + stub libs + compiler-rt builtins, android.jar, mGBA @ 7a12d6d + patch
+bash tools/setup_toolchain.sh      # bionic headers, stub libs, compiler-rt, android.jar, mGBA @ 7a12d6d + patch
 bash tools/build_apk.sh            # -> out/Super Mario Advance Dual <ver>.apk
-bash tools/build_link_apk.sh       # -> out/Super Mario Advance Link <ver>.apk (no native code, no setup step)
+bash tools/build_link_apk.sh       # -> out/Super Mario Advance Link <ver>.apk (no native code)
 ```
-apt: clang lld llvm aapt zipalign apksigner dalvik-exchange openjdk-17-jdk-headless.
-`out/android/libsmadual.so` is included so the core doesn't have to be rebuilt. The signing keys (`tools/smadual.keystore`, `tools/smalink.keystore`) and their passwords (one line each in a `.pass` file beside the key) aren't in git. The build makes a new key with a random password if there is none, but an APK signed with a new key can't update one signed with the old, so keep them safe.
+Needs clang, lld, llvm, git, python3, aapt, zipalign, apksigner, dalvik-exchange and openjdk-17. `setup_toolchain.sh`
+fetches android.jar (API 33) from github.com/Sable/android-platforms. The signing keystores are not in the repo:
+`build_apk.sh` creates a new one with a random password if `tools/smadual.keystore` is missing (`build_link_apk.sh`
+the same for `tools/smalink.keystore`), with the password in a `.pass` file beside it. Builds signed with a different
+key can't update an installed copy.
 
-## Test
-- `make -C native TARGET=host MGBA=... host` -> `out/host/drive rom script [savedir]`
-  (run/tap/shot/dump/save/load/peek/poke/rec/trace/rtrace/trk/trkreset/oc/lag/extract/layer/clock). `trk` prints the Dual tracker. `layer id 0|1` leaves a layer out of the picture (4 is the sprites); `clock N` times N frames of the core. `extract file` runs the first-start
-  capture on a freshly loaded ROM (use an empty savedir). `dump` = IWRAM | EWRAM | IO | PAL | VRAM | OAM.
-  `trace lo hi max file` logs every CPU write in a range with PC and LR; `rec N buttons file` appends IWRAM per frame.
-- `tests/linktest.py rom dump out [js]`: Link page in headless Chromium with a mock Native fed from a dump.
-- `tests/menutest.py rom thumb.png outdir [kit.bin|-] [standin]`: launcher / pause / settings, with a capture
-  from `drive ... extract`; `standin` swaps every ROM piece (and the font) for plain stand-ins for preview images.
-- `tests/scene3d/`: `build.sh`, then `SceneDump rom dump out.s3d` and `shot.py out.png out.s3d [preset] [standin]`
-  renders the 3D view with Renderer3D's own shaders in headless Chromium (WebGL).
-- `tests/ra/`, `tests/mock_ra.py`: Link's transport, tracker, kit and page; see [linkapp/README.md](linkapp/README.md).
-- `tests/input/`: `build.sh`, then `java -cp tests/input/out com.jack.smadual.InputCheck binds.json` (default hotkeys, saved bindings, triggers) and
-  `check_defaults.py rom kit dump binds.json outdir` (every default in the source, the Konami lock in the menu, Link's 3D tab).
-- `tests/showcase/`: the release pictures. `spots.py WORK` plays to each spot on the driver (flying along the top so the game really scrolls and spawns what's
-  there; `SHOW_DIR` picks the folder), `render3d.py WORK OUT` renders each in every camera and the 3D menu's options, `linkshots.py WORK OUT` Link's pictures with
-  the game on top, and `dualscreen.py WORK OUT [gifs|stills]` the GIFs and stills in the Thor's layout (run `build.sh` first; `showcase_clips.py` lists what they show).
+New 3DS (devkitPro's 3ds-dev: devkitARM r68, libctru 2.7.0, citro3d 1.7.1; and ImageMagick):
+```
+export DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+make -C native/ctr MGBA=$HOME/src/mgba OUT=$HOME/sma3d/ctr      # -> $OUT/Super Mario Advance Dual 3DS.3dsx
+OUT=$HOME/sma3d/ctr bash native/ctr/cia/build_cia.sh            # -> $OUT/Super Mario Advance Dual 3DS.cia
+```
+`MGBA` is the patched mGBA that `setup_toolchain.sh` checks out. The `.cia` also needs makerom (3DSGuy/Project_CTR),
+bannertool (carstene1ns/3ds-bannertool) and Pillow. The core's profile in `native/ctr/pgo/` only applies with mGBA at
+`$HOME/src/mgba`.
 
-## Licence
-mGBA is MPL-2.0. Its licence text ships in the APK as `assets/licenses/mGBA-MPL-2.0.txt`, and SETTINGS > SYSTEM names it. Its source is mGBA at the commit above plus `native/mgba-dual.patch`, which `tools/setup_toolchain.sh` fetches and applies.
+## Credits and licences
+This project is licensed under the **GNU General Public License v2.0 or later** (see `LICENSE`).
+If you do use parts of it in your project, please credit me as a "playtester".
+The release builds include:
+- **mGBA** (MPL-2.0), github.com/libretro/mgba, commit `7a12d6d4`, with `native/mgba-dual.patch` (the NO SLOWDOWN
+  overclock, a vblank-wait counter, a write-trace hook for desktop builds). Its licence ships in the Dual APK and
+  the 3DS zip.
+- **compiler-rt builtins** (Apache-2.0 with LLVM exception), github.com/llvm/llvm-project, unmodified, commit
+  `e5fc6fb5` (Dual APK).
+- **libctru** 2.7.0 and **citro3d** 1.7.1 (zlib), github.com/devkitPro, unmodified (3DS).
+- **newlib** 4.6.0 (BSD-style licences), the C library as built by devkitARM r68 (3DS).
+
+RAM and ROM addresses were found by tracing and poking the running game in the desktop driver (`native/drive.c`).
+A few are from Data Crystal's Super Mario Advance RAM map, and the object types follow Xkeeper0/smb2's SMB2
+disassembly.
+Super Mario Advance and Mario are trademarks of Nintendo. This is an unofficial fan project and is not affiliated
+with Nintendo.
+
+## RAM / ROM used (Super Mario Advance USA, Europe)
+`030019B0` game mode (2 menus, 3 SMB2, 4 Mario Bros. Classic), `03001991` / `03001992` sub-mode / state (mode 3,
+1, 1 = playing), `03001160` level (0-19 = 1-1 to 7-2), `030019FE` area, `03001161` lives, `0300114C` score / 10,
+`03001C70` character (0 Mario, 1 Peach, 2 Toad, 3 Luigi), `03001C76` health (`0F`, `1F`, `2F`, `3F` = 1-4 hearts),
+`03001C77` mushrooms taken, `03001A07` / `03001A26` coins / cherries, `03001C88` / `03001CAC` / `03001CCF` star /
+stopwatch / Subspace timers, `03001150-5C` Ace Coins (5 bits per level), `0300115D-5F` levels cleared (a bit per
+level), `03001140-44` Yoshi eggs (2 bits per level), `03001148-4B` levels cleared per character, `03001C4A` /
+`03001C4E` player X / Y, `03001168` camera X, `03001CF0` object slots (`0x70` each), `02000000` the decoded area
+(u16 metatiles, pages of 15 x 16), `02002B20` sky colours.
+ROM (file offsets): font `0x2F3D7C` (48 tiles), metatile tiles `0x3400E0`, object lists `0x364D84` (20 levels x 11
+areas of type, x, y), title logo `0x32DB10`, player sprites from `0x2EAB5C` (`0x2000` per character).
+Everything the apps read, and how each address was found: [RAM-MAP.md](RAM-MAP.md).
