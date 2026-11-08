@@ -75,7 +75,8 @@ $(OUT)/smadual3ds.elf: $(OBJS)
 $(OUT)/icon.png: ../../app/res/mipmap-xxxhdpi/smba_dual.png
 	convert "$<" -filter box -resize 48x48 $@
 
-$(OUT)/smadual3ds.smdh: $(OUT)/icon.png
+# on the Makefile too, so a new VERSION reaches the HOME Menu text (0.32's first zip still said 0.31-alpha there)
+$(OUT)/smadual3ds.smdh: $(OUT)/icon.png Makefile
 	$(DEVKITPRO)/tools/bin/smdhtool --create "Super Mario Advance Dual" "$(VERSION): the game + a Link screen" "Jack" $< $@
 
 $(OUT)/Super\ Mario\ Advance\ Dual\ 3DS.3dsx: $(OUT)/smadual3ds.elf $(OUT)/smadual3ds.smdh

@@ -140,6 +140,7 @@ Change a core flag in the Makefile and `rm -rf $OUT/obj` first: make doesn't tra
 - `test/build_test.sh` + `test/azahar_run.sh`: the ARM build with `CTR_TEST` boots straight into the game and plays a compiled-in script of buttons, taps and menu keys by frame, since Azahar's
   input can't be driven headless. `TEST_STATE` loads a state at frame 2. `TEST_HASH` logs a hash of the machine and the picture at a frame, to compare two builds. From a boot it also depends on `game.sav`, so compare on the same SD card.
 - `test/pgo.sh`: redoes `pgo/`, the compiler's profile of the core, by playing six levels in Azahar with a counting build. Redo it if mGBA or the patch changes; a function that changed just isn't optimised by it. `PGO=off` builds without it.
+  GCC finds each core file's profile by that file's path, so the profile only applies with mGBA where it was recorded (`$HOME/src/mgba` on the PC that made it). With mGBA anywhere else the core quietly builds with almost none of it, and the `.3dsx` comes out about 12 KB larger. A build from a fresh clone with `MGBA=$HOME/src/mgba` is byte-identical to one from the original folder.
 - `test/pacetest.c`: `pace.h` against a model of the screen, next to 0.3's wait. It builds on any computer and fails if the wait breaks its rules.
 - `test/musicdump.c`: the music as a WAV.
 
