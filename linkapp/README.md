@@ -72,4 +72,4 @@ The game sat still in that run; moving play was run against `tests/mock_ra.py` p
 phone are untested. Also the same never-focused window as the other Link apps, so the same open question about Android's "isn't responding" dialog
 (Shantae Link's README).
 
-Keystore: `tools/smalink.keystore`, alias `smalink`, not in git; keep it: updates must use the same key.
+Keystore: `tools/smalink.keystore`, alias `smalink`, and its password, the one line of `tools/smalink.keystore.pass`. Neither is in git; keep both: updates must use the same key.

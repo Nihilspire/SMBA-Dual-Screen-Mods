@@ -4,7 +4,7 @@
 import json, os, struct, subprocess, sys
 W = sys.argv[1]
 DRIVE = os.path.expanduser('~/sma3d/out/host/drive')
-OUT = W + '/show'; os.makedirs(OUT, exist_ok=True)
+OUT = W + '/' + os.environ.get('SHOW_DIR', 'show'); os.makedirs(OUT, exist_ok=True)
 #        name              level area  x     character (0 Mario 1 Peach 2 Toad 3 Luigi)  walk   note
 SPOTS = [('1-1_hills',         0, 2, 1560, 0, 'R'),
          ('1-1_logs_water',    0, 2,  980, 3, 'R'),
@@ -37,7 +37,8 @@ def ground(lv, an, x):
         if col[r] >> 8 in (1, 2) and col[r - 1] >> 8 == 0: return r * 16
     return 14 * 16
 def script(name, lv, an, x, ch, walk):
-    L = ['poke 030019FE %X' % an, 'poke 03001992 0', 'run 80', 'poke 03001C70 %02X' % ch, 'run 4']
+    # the character before the area reloads: its sprites are chosen there, so poked after it they stay the old character's in the new one's colours
+    L = ['poke 03001C70 %02X' % ch, 'poke 030019FE %X' % an, 'poke 03001992 0', 'run 80', 'poke 03001C70 %02X' % ch, 'run 4']
     d = open('%s/au/L%02d_A%d.bin' % (W, lv, an), 'rb').read(); x0 = struct.unpack_from('<H', d, 0x1C4A)[0]
     g = ground(lv, an, x)
     cx = x0
@@ -48,9 +49,9 @@ def script(name, lv, an, x, ch, walk):
     L += p16(0x03001C4A, cx) + p16(0x03001C60, cx) + p16(0x03001C4E, y) + p16(0x03001C62, y) + ['poke 03001C88 FF', 'poke 03001C6F 00', 'run 50']
     if name in HOLD_Y:                        # soft sand swallows whoever stands in it: hold them on top of it
         for i in range(40): L += p16(0x03001C4E, HOLD_Y[name]) + p16(0x03001C62, HOLD_Y[name]) + ['poke 03001C6F 00', 'run 1']
-        L += ['poke 03001C88 00']
+        L += ['poke 03001C88 04']             # let the star run out: set straight to 0 it leaves the player's palette on a star colour
         for i in range(6): L += p16(0x03001C4E, HOLD_Y[name]) + p16(0x03001C62, HOLD_Y[name]) + ['run 1']
-    else: L += ['run 24 ' + walk, 'poke 03001C88 00', 'poke 03001C76 3F', 'run 8 ' + walk]
+    else: L += ['run 24 ' + walk, 'poke 03001C88 04', 'poke 03001C76 3F', 'run 8 ' + walk]
     L = [l.strip() for l in L]
     L += ['dump %s/%s.bin' % (OUT, name), 'shot %s/%s.ppm' % (OUT, name), 'save %s/%s.st' % (OUT, name), 'peek 03001160 1', 'peek 030019FE 1', 'peek 03001991 2', 'peek 03001C4A 2', 'peek 03001C4E 2', 'peek 03001C6F 1', 'peek 03001C70 1']
     return L

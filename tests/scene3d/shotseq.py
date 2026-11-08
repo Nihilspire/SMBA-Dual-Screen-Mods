@@ -23,7 +23,7 @@ with sync_playwright() as p:
             if pg: pg.close()
             pg = b.new_page(viewport={'width': vw, 'height': vh})
             pg.goto('file://' + here + '/view.html')
-            pg.evaluate('(a) => { window.FS = a; window.LIGHT = false; window.STANDIN = false; }', fs)
+            pg.evaluate('(a) => { window.FS = a[0]; window.LIGHT = a[1]; window.STANDIN = false; }', [fs, bool(os.environ.get('LIGHT'))])
         c = cams[i] if cams else cam
         pg.evaluate('(a) => show(a[0], a[1])', [base64.b64encode(raw).decode(), c])
         pg.screenshot(path=os.path.join(outd, n + '.png'))

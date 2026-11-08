@@ -5,6 +5,9 @@ out/android/*
 tests/scene3d/out/
 tests/ra/out/
 tests/input/out/
+tests/showcase/out/
 __pycache__/
 *.apk
 tools/*.keystore*
+*.jks
+*.pass

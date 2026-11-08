@@ -33,10 +33,17 @@ dalvik-exchange --dex --min-sdk-version=23 --output="$B/classes.dex" "$B/classes
 cp "$B/res.apk" "$B/unsigned.apk"
 (cd "$B" && aapt add unsigned.apk classes.dex >/dev/null && aapt add -0 so unsigned.apk lib/arm64-v8a/libsmadual.so >/dev/null)
 zipalign -f -p 16 "$B/unsigned.apk" "$B/aligned.apk"
+# Signing key and its password stay out of git (tools/*.keystore*): the password is the one line of $KS.pass.
+# A fresh checkout gets a new key with a random password (it can't update an APK signed with the old key).
 KS=$ROOT/tools/smadual.keystore
-[ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass smadual -keypass smadual -alias smadual \
-  -keyalg RSA -keysize 2048 -validity 20000 -dname "CN=Super Mario Advance Dual, O=Jack" >/dev/null 2>&1
+if [ ! -f "$KS" ]; then
+  [ -f "$KS.pass" ] || { head -c 18 /dev/urandom | base64 | tr -d '/+=' > "$KS.pass"; chmod 600 "$KS.pass"; }
+  P=$(cat "$KS.pass")
+  keytool -genkeypair -keystore "$KS" -storepass "$P" -keypass "$P" -alias smadual \
+    -keyalg RSA -keysize 2048 -validity 20000 -dname "CN=Super Mario Advance Dual, O=Jack" >/dev/null 2>&1
+fi
+[ -f "$KS.pass" ] || { echo "missing $KS.pass (the keystore's password, one line)"; exit 1; }
 OUT="$ROOT/out/Super Mario Advance Dual $VER.apk"
-apksigner sign --ks "$KS" --ks-pass pass:smadual --key-pass pass:smadual --ks-key-alias smadual --out "$OUT" "$B/aligned.apk"
+apksigner sign --ks "$KS" --ks-pass "file:$KS.pass" --ks-key-alias smadual --out "$OUT" "$B/aligned.apk"
 rm -f "$OUT.idsig"
 apksigner verify "$OUT" && ls -la "$OUT"

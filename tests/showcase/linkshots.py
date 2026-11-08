@@ -8,7 +8,7 @@ HERE = os.path.dirname(os.path.abspath(__file__)); T = HERE + '/../scene3d'
 sys.path.insert(0, HERE + '/../ra')
 import linkpage
 W, OUT = sys.argv[1], sys.argv[2]
-SHOW = W + '/show'; os.makedirs(OUT, exist_ok=True); TMP = SHOW + '/_l'; os.makedirs(TMP, exist_ok=True)
+SHOW = W + '/' + os.environ.get('SHOW_DIR', 'show'); os.makedirs(OUT, exist_ok=True); TMP = SHOW + '/_l'; os.makedirs(TMP, exist_ok=True)
 rom = open(W + '/sma.gba', 'rb').read(); kit = open(W + '/ra43/kit_rom.bin', 'rb').read()
 SW, SH = 620, 540                      # css px at 2x: the Thor's lower screen
 TAB = {'status': .123, 'map': .319, 'chart': .498, '3d': .66, 'options': .858}
@@ -46,7 +46,7 @@ with sync_playwright() as p:
         layer = None
         if gl:
             x, y, w, h = [round(v * (SW * 2 if i % 2 == 0 else SH * 2)) for i, v in enumerate(gl)]
-            layer = (render3d(spot, cam or 'tilt', w, h, name, env, light), x, y)
+            layer = (render3d(spot, cam or 'low', w, h, name, env, light), x, y)
         compose(png, '%s/%s.ppm' % (SHOW, spot), '%s/%s.png' % (OUT, name), layer)
         if pg.msgs: print(name, pg.msgs[:3])
         pg.context.close()
